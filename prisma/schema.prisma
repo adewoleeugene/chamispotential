@@ -1,0 +1,235 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  phone     String?
+  name      String
+  password  String
+  role      String   @default("staff") // admin, manager, staff, cashier, kitchen
+  avatar    String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  orders    Order[]
+  shifts    Shift[]
+}
+
+model Category {
+  id          String     @id @default(cuid())
+  name        String
+  description String?
+  color       String?
+  icon        String?
+  sortOrder   Int        @default(0)
+  isActive    Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  menuItems   MenuItem[]
+}
+
+model MenuItem {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  price       Float
+  cost        Float?
+  image       String?
+  categoryId  String
+  isAvailable Boolean  @default(true)
+  isPopular   Boolean  @default(false)
+  allergens   String?  // JSON string
+  calories    Int?
+  prepTime    Int?     // minutes
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  category          Category           @relation(fields: [categoryId], references: [id])
+  orderItems        OrderItem[]
+  recipeIngredients RecipeIngredient[]
+}
+
+model RecipeIngredient {
+  id           String    @id @default(cuid())
+  menuItemId   String
+  inventoryId  String
+  quantityUsed Float     // How much of the inventory unit is used per meal
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  menuItem     MenuItem  @relation(fields: [menuItemId], references: [id])
+  inventory    Inventory @relation(fields: [inventoryId], references: [id])
+}
+
+model Table {
+  id           String   @id @default(cuid())
+  number       Int      @unique
+  capacity     Int
+  section      String?
+  status       String   @default("available") // available, occupied, reserved, cleaning
+  mergeGroupId String?  // shared UUID for all tables in a merged group
+  qrCode       String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  orders      Order[]
+  reservations Reservation[]
+}
+
+model Order {
+  id         String   @id @default(cuid())
+  orderNumber Int     @unique
+  tableId    String?
+  userId     String
+  status     String   @default("pending") // pending, preparing, ready, served, completed, cancelled
+  type       String   @default("dine-in") // dine-in, takeout, delivery
+  subtotal   Float    @default(0)
+  tax        Float    @default(0)
+  discount   Float    @default(0)
+  tip        Float    @default(0)
+  total      Float    @default(0)
+  notes      String?
+  paymentStatus String @default("unpaid") // unpaid, partial, processing, paid, failed
+  paymentMethod String? // cash, card, mobile, monime
+  customerName  String?
+  customerPhone String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  table      Table?      @relation(fields: [tableId], references: [id])
+  user       User        @relation(fields: [userId], references: [id])
+  items      OrderItem[]
+  paymentAttempts PaymentAttempt[]
+}
+
+model PaymentAttempt {
+  id                     String   @id @default(cuid())
+  orderId                String
+  provider               String   @default("monime")
+  attemptNumber          Int      @default(1)
+  reference              String   @unique
+  idempotencyKey         String   @unique
+  callbackState          String   @unique
+  status                 String   @default("pending") // pending, processing, completed, failed, cancelled
+  currency               String
+  amountMinor            Int
+  monimeCheckoutSessionId String? @unique
+  monimePaymentId        String?  @unique
+  redirectUrl            String?
+  failureReason          String?
+  lastWebhookEventId     String?
+  metadataJson           String?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  order             Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  webhookDeliveries  WebhookDelivery[]
+
+  @@index([orderId, provider])
+  @@index([reference])
+}
+
+model WebhookDelivery {
+  id               String   @id @default(cuid())
+  provider         String   @default("monime")
+  eventId          String   @unique
+  eventType        String?
+  paymentAttemptId String?
+  receivedAt       DateTime @default(now())
+
+  paymentAttempt PaymentAttempt? @relation(fields: [paymentAttemptId], references: [id], onDelete: SetNull)
+
+  @@index([paymentAttemptId])
+}
+
+model OrderItem {
+  id         String   @id @default(cuid())
+  orderId    String
+  menuItemId String
+  quantity   Int
+  unitPrice  Float
+  notes      String?
+  status     String   @default("pending") // pending, preparing, ready, served
+  createdAt  DateTime @default(now())
+
+  order    Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItem MenuItem @relation(fields: [menuItemId], references: [id])
+}
+
+model Reservation {
+  id           String   @id @default(cuid())
+  tableId      String?
+  customerName String
+  customerEmail String?
+  customerPhone String
+  partySize    Int
+  date         DateTime
+  duration     Int      @default(90) // minutes
+  status       String   @default("confirmed") // pending, confirmed, seated, completed, cancelled, no-show
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  table Table? @relation(fields: [tableId], references: [id])
+}
+
+model Inventory {
+  id           String   @id @default(cuid())
+  name         String
+  category     String
+  unit         String
+  currentStock Float
+  minStock     Float
+  maxStock     Float?
+  cost         Float?
+  supplier     String?
+  location     String?
+  lastRestocked DateTime?
+  expiryDate   DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  recipes      RecipeIngredient[]
+}
+
+model Shift {
+  id        String    @id @default(cuid())
+  userId    String
+  startTime DateTime
+  endTime   DateTime?
+  hoursWorked Float?
+  notes     String?
+  status    String    @default("scheduled") // scheduled, active, completed
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model Expense {
+  id          String   @id @default(cuid())
+  category    String
+  description String
+  amount      Float
+  date        DateTime
+  receipt     String?
+  approvedBy  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Settings {
+  id            String   @id @default(cuid())
+  key           String   @unique
+  value         String
+  updatedAt     DateTime @updatedAt
+}
