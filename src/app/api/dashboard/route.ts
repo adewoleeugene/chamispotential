@@ -35,9 +35,13 @@ export async function GET(req: NextRequest) {
         totalCustomers,
         tableStats,
         topItems,
+        bottomItems,
+        allMenuItems,
         recentOrders,
         lowInventory,
         dailyRevenue,
+        monthDailyRevenue,
+        orderTypeMix,
         activeTablesQuery,
     ] = await Promise.all([
         prisma.order.count({ where: { createdAt: { gte: todayStart, lte: todayEnd }, status: { not: 'cancelled' } } }),
@@ -56,6 +60,15 @@ export async function GET(req: NextRequest) {
             _sum: { quantity: true },
             orderBy: { _sum: { quantity: 'desc' } },
             take: 5,
+        }),
+        prisma.orderItem.groupBy({
+            by: ['menuItemId'],
+            _sum: { quantity: true },
+            orderBy: { _sum: { quantity: 'asc' } },
+            take: 5,
+        }),
+        prisma.menuItem.findMany({
+            select: { id: true, name: true, price: true, isPopular: true, category: { select: { name: true } } },
         }),
         prisma.order.findMany({
             where: { ...waiterWhere },
@@ -77,6 +90,26 @@ export async function GET(req: NextRequest) {
                 }).then((r: any) => ({ date: day.toISOString().split('T')[0], revenue: r._sum.total || 0 }));
             })
         ),
+        Promise.all(
+            Array.from({ length: 30 }, (_, i) => {
+                const day = subDays(now, 29 - i);
+                return prisma.order.aggregate({
+                    where: { createdAt: { gte: startOfDay(day), lte: endOfDay(day) }, status: { not: 'cancelled' } },
+                    _sum: { total: true },
+                    _count: true,
+                }).then((r: any) => ({
+                    date: day.toISOString().split('T')[0],
+                    revenue: r._sum.total || 0,
+                    orders: r._count || 0,
+                }));
+            })
+        ),
+        prisma.order.groupBy({
+            by: ['type'],
+            where: { createdAt: { gte: monthStart, lte: monthEnd }, status: { not: 'cancelled' } },
+            _count: true,
+            _sum: { total: true },
+        }),
         // Active tables explicitly mapped with their current active order for the waiter
         prisma.table.findMany({
             where: {
@@ -102,6 +135,56 @@ export async function GET(req: NextRequest) {
         })
     );
 
+    const quantityByMenuItemId = new Map<string, number>();
+    for (const item of topItems) {
+        quantityByMenuItemId.set(item.menuItemId, item._sum.quantity || 0);
+    }
+    for (const item of bottomItems) {
+        quantityByMenuItemId.set(item.menuItemId, item._sum.quantity || 0);
+    }
+
+    const itemPerformance = allMenuItems.map((item) => ({
+        id: item.id,
+        name: item.name,
+        category: item.category?.name || 'Uncategorised',
+        quantity: quantityByMenuItemId.get(item.id) || 0,
+        estimatedRevenue: (quantityByMenuItemId.get(item.id) || 0) * item.price,
+        isPopular: item.isPopular,
+    }));
+
+    const mostOrderedItem = [...itemPerformance].sort((a, b) => b.quantity - a.quantity)[0] || null;
+    const leastOrderedItem = [...itemPerformance].sort((a, b) => a.quantity - b.quantity)[0] || null;
+    const peakRevenueDay = [...monthDailyRevenue].sort((a, b) => b.revenue - a.revenue)[0] || null;
+    const slowMovingItems = [...itemPerformance].sort((a, b) => a.quantity - b.quantity).slice(0, 5);
+    const avgTicket = monthOrders > 0 ? (monthRevenue._sum.total || 0) / monthOrders : 0;
+
+    const decisionInsights = [
+        peakRevenueDay
+            ? {
+                title: 'Peak revenue day',
+                detail: `${peakRevenueDay.date} brought in ${peakRevenueDay.revenue.toFixed(2)} across ${peakRevenueDay.orders} orders.`,
+              }
+            : null,
+        mostOrderedItem
+            ? {
+                title: 'Best seller',
+                detail: `${mostOrderedItem.name} led demand with ${mostOrderedItem.quantity} orders this period.`,
+              }
+            : null,
+        leastOrderedItem
+            ? {
+                title: 'Slowest mover',
+                detail: `${leastOrderedItem.name} recorded ${leastOrderedItem.quantity} orders and may need promotion, repositioning, or removal.`,
+              }
+            : null,
+        lowInventory.length > 0
+            ? {
+                title: 'Inventory pressure',
+                detail: `${lowInventory.length} inventory items are already at or below minimum stock.`,
+              }
+            : null,
+    ].filter(Boolean);
+
     const tableStatusMap = tableStats.reduce((acc: any, t: any) => {
         acc[t.status] = (t._count as number);
         return acc;
@@ -120,14 +203,22 @@ export async function GET(req: NextRequest) {
         revenue: {
             today: todayRevenue._sum.total || 0,
             month: monthRevenue._sum.total || 0,
+            peakDay: peakRevenueDay,
+            averageTicket: avgTicket,
         },
         customers: totalCustomers,
         tables: tableStatusMap,
         activeTablesCount: activeTablesQuery.length,
         activeTablesList: activeTablesQuery,
         topItems: topItemsWithNames,
+        mostOrderedItem,
+        leastOrderedItem,
+        slowMovingItems,
+        orderTypeMix,
         recentOrders,
         lowInventory,
         dailyRevenue,
+        monthDailyRevenue,
+        decisionInsights,
     });
 }

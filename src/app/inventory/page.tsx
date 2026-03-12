@@ -9,12 +9,19 @@ import { formatCurrency } from '@/lib/currency';
 export default function InventoryPage() {
     const { settings } = useSettings();
     const [items, setItems] = useState<any[]>([]);
+    const [adviceSummary, setAdviceSummary] = useState<any>({ reorderNow: 0, reorderSoon: 0, topUsed: [] });
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState('');
     const toast = useToast();
 
     useEffect(() => {
-        fetch('/api/inventory').then(r => r.json()).then(d => { setItems(d); setLoading(false); });
+        fetch('/api/inventory')
+            .then(r => r.json())
+            .then(d => {
+                setItems(Array.isArray(d.items) ? d.items : []);
+                setAdviceSummary(d.adviceSummary || { reorderNow: 0, reorderSoon: 0, topUsed: [] });
+                setLoading(false);
+            });
     }, []);
 
     const filtered = items.filter(i => i.name.toLowerCase().includes(search.toLowerCase()) || i.category.toLowerCase().includes(search.toLowerCase()));
@@ -26,6 +33,11 @@ export default function InventoryPage() {
     };
 
     const getPercentage = (item: any) => Math.min(100, (item.currentStock / item.maxStock) * 100);
+    const formatDaysRemaining = (daysRemaining: number | null) => {
+        if (daysRemaining == null) return 'No usage data yet';
+        if (daysRemaining < 1) return 'Less than 1 day left';
+        return `${daysRemaining.toFixed(1)} days left`;
+    };
 
     if (loading) return <AppLayout><div className="loading-spinner" style={{ margin: '100px auto' }} /></AppLayout>;
 
@@ -39,6 +51,33 @@ export default function InventoryPage() {
                 <button className="btn btn-primary"><Plus size={16} /> Add Inventory</button>
             </div>
 
+            <div className="grid-3 gap-4 mb-6">
+                <div className="card">
+                    <div className="text-sm text-muted mb-2">Reorder now</div>
+                    <div style={{ fontSize: 28, fontWeight: 800, color: '#ef4444' }}>{adviceSummary.reorderNow || 0}</div>
+                    <div className="text-sm text-muted mt-2">Items already below safe usage cover or min stock.</div>
+                </div>
+                <div className="card">
+                    <div className="text-sm text-muted mb-2">Reorder soon</div>
+                    <div style={{ fontSize: 28, fontWeight: 800, color: '#f59e0b' }}>{adviceSummary.reorderSoon || 0}</div>
+                    <div className="text-sm text-muted mt-2">Items projected to run low within the next week.</div>
+                </div>
+                <div className="card">
+                    <div className="text-sm text-muted mb-2">Top usage this week</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {(adviceSummary.topUsed || []).slice(0, 3).map((item: any) => (
+                            <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13 }}>
+                                <span className="font-bold">{item.name}</span>
+                                <span className="text-muted">{item.weeklyUsage.toFixed(1)} {item.unit}</span>
+                            </div>
+                        ))}
+                        {(!adviceSummary.topUsed || adviceSummary.topUsed.length === 0) && (
+                            <div className="text-sm text-muted">No usage history yet.</div>
+                        )}
+                    </div>
+                </div>
+            </div>
+
             <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
                 <table className="data-table">
                     <thead>
@@ -46,6 +85,7 @@ export default function InventoryPage() {
                             <th>Item Name</th>
                             <th>Category</th>
                             <th>Stock Level</th>
+                            <th>Usage Advice</th>
                             <th>Unit Cost</th>
                             <th>Supplier</th>
                             <th>Actions</th>
@@ -75,6 +115,27 @@ export default function InventoryPage() {
                                             </div>
                                         </div>
                                     </td>
+                                    <td style={{ minWidth: 220 }}>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                            <span className="badge" style={{
+                                                background: item.advice === 'reorder_now' ? 'rgba(239,68,68,0.12)' : item.advice === 'reorder_soon' ? 'rgba(245,158,11,0.12)' : 'rgba(34,197,94,0.12)',
+                                                color: item.advice === 'reorder_now' ? '#ef4444' : item.advice === 'reorder_soon' ? '#f59e0b' : '#22c55e',
+                                            }}>
+                                                {item.advice === 'reorder_now' ? 'Reorder now' : item.advice === 'reorder_soon' ? 'Reorder soon' : 'Healthy'}
+                                            </span>
+                                            <div className="text-sm text-muted">{formatDaysRemaining(item.daysRemaining)}</div>
+                                            {item.recommendedReorderQty > 0 && (
+                                                <div className="text-sm">
+                                                    Buy about <span className="font-bold">{item.recommendedReorderQty.toFixed(1)} {item.unit}</span>
+                                                </div>
+                                            )}
+                                            {item.drivers?.length > 0 && (
+                                                <div className="text-xs text-muted">
+                                                    Driven by {item.drivers.map((driver: any) => driver.menuItemName).join(', ')}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </td>
                                     <td className="font-bold">{formatCurrency(item.cost, settings.currencySymbol)} /{item.unit}</td>
                                     <td className="text-muted text-sm">{item.supplier || '-'}</td>
                                     <td>
@@ -87,7 +148,7 @@ export default function InventoryPage() {
                             );
                         })}
                         {filtered.length === 0 && (
-                            <tr><td colSpan={6} className="empty-state">No inventory items found</td></tr>
+                            <tr><td colSpan={7} className="empty-state">No inventory items found</td></tr>
                         )}
                     </tbody>
                 </table>
