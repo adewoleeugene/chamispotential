@@ -1,19 +1,22 @@
 // eslint-disable-next-line @typescript-eslint/no-require-imports
+require('dotenv/config');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { PrismaClient } = require('@prisma/client');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { PrismaLibSql } = require('@prisma/adapter-libsql');
+const { PrismaPg } = require('@prisma/adapter-pg');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const bcrypt = require('bcryptjs');
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const path = require('path');
 
-const dbPath = path.resolve(__dirname, '../dev.db');
-const adapter = new PrismaLibSql({ url: `file://${dbPath}` });
+if (!process.env.DATABASE_URL) {
+    throw new Error('DATABASE_URL is not configured');
+}
+
+const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
     console.log('Seeding database...');
-    console.log('Using DB at:', dbPath);
+    console.log('Using DB URL from DATABASE_URL');
 
     // Create admin user
     const adminPassword = await bcrypt.hash('admin123', 12);
