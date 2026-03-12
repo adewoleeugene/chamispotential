@@ -10,7 +10,7 @@ import {
 
 const navItems = [
     { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', section: 'main', roles: ['admin', 'manager', 'waiter'] },
-    { href: '/orders', icon: ShoppingCart, label: 'Orders', section: 'main', roles: ['admin', 'manager', 'waiter'] },
+    { href: '/orders', icon: ShoppingCart, label: 'Orders', section: 'main', roles: ['admin', 'manager'] },
     { href: '/tables', icon: Table2, label: 'Tables', section: 'main', roles: ['admin', 'manager', 'waiter'] },
     { href: '/menu', icon: UtensilsCrossed, label: 'Menu', section: 'main', roles: ['admin', 'manager'] },
     { href: '/reservations', icon: CalendarDays, label: 'Reservations', section: 'main', roles: ['admin', 'manager'] },
