@@ -1,6 +1,5 @@
 'use client';
 import React, { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSettings } from '@/contexts/SettingsContext';
@@ -11,7 +10,6 @@ import { formatCurrency } from '@/lib/currency';
 export default function Dashboard() {
     const { user } = useAuth();
     const { settings } = useSettings();
-    const router = useRouter();
     const [data, setData] = useState<any>(null);
     const [loading, setLoading] = useState(true);
 
@@ -34,7 +32,7 @@ export default function Dashboard() {
             <AppLayout>
                 <div className="mb-6">
                     <h2 className="text-xl font-bold">My Shift Summary</h2>
-                    <p className="text-muted text-sm">Real-time status of your tables and orders.</p>
+                    <p className="text-muted text-sm">Real-time status of your tables and service queue.</p>
                 </div>
                 <div className="stat-grid">
                     <div className="stat-card orange">
@@ -57,78 +55,37 @@ export default function Dashboard() {
                     </div>
                 </div>
 
-                <div className="grid-2 mt-4">
-                    <div className="card">
-                        <div className="card-header">
-                            <div>
-                                <h3 className="card-title">My Recent Orders</h3>
-                                <p className="card-subtitle">Track the kitchen status of your tables</p>
-                            </div>
-                        </div>
-                        <div style={{ overflowX: 'auto' }}>
-                            <table className="data-table">
-                                <thead>
-                                    <tr>
-                                        <th>Order</th>
-                                        <th>Table</th>
-                                        <th>Status</th>
-                                        <th>Action</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {data?.recentOrders?.map((order: any) => (
-                                        <tr key={order.id}>
-                                            <td>
-                                                <div className="font-bold">#{order.orderNumber}</div>
-                                                <div className="text-muted text-sm">{new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
-                                            </td>
-                                            <td className="font-bold">{order.table?.number ? `Table ${order.table.number}` : 'Takeaway'}</td>
-                                            <td><span className={`badge ${order.status}`}>{order.status}</span></td>
-                                            <td>
-                                                <button className="btn btn-secondary text-sm" style={{ padding: '6px 12px' }} onClick={() => router.push('/tables')}>View Table</button>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                    {!data?.recentOrders?.length && (
-                                        <tr><td colSpan={4} className="empty-state">No recent orders</td></tr>
-                                    )}
-                                </tbody>
-                            </table>
+                <div className="card mt-4">
+                    <div className="card-header">
+                        <div>
+                            <h3 className="card-title">My Active Tables</h3>
+                            <p className="card-subtitle">Tables you are currently serving</p>
                         </div>
                     </div>
-
-                    <div className="card">
-                        <div className="card-header">
-                            <div>
-                                <h3 className="card-title">My Active Tables</h3>
-                                <p className="card-subtitle">Tables you are currently serving</p>
-                            </div>
-                        </div>
-                        <div style={{ overflowX: 'auto' }}>
-                            <table className="data-table">
-                                <thead>
-                                    <tr>
-                                        <th>Table</th>
-                                        <th>Capacity</th>
-                                        <th>Status</th>
-                                        <th>Orders</th>
+                    <div style={{ overflowX: 'auto' }}>
+                        <table className="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Table</th>
+                                    <th>Capacity</th>
+                                    <th>Status</th>
+                                    <th>Orders</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {data?.activeTablesList?.map((table: any) => (
+                                    <tr key={table.id}>
+                                        <td className="font-bold">Table {table.number}</td>
+                                        <td className="text-muted">{table.capacity} pax</td>
+                                        <td><span className={`badge ${table.status}`}>{table.status}</span></td>
+                                        <td className="font-bold">{table.orders?.length || 0} active</td>
                                     </tr>
-                                </thead>
-                                <tbody>
-                                    {data?.activeTablesList?.map((table: any) => (
-                                        <tr key={table.id}>
-                                            <td className="font-bold">Table {table.number}</td>
-                                            <td className="text-muted">{table.capacity} pax</td>
-                                            <td><span className={`badge ${table.status}`}>{table.status}</span></td>
-                                            <td className="font-bold">{table.orders?.length || 0} active</td>
-                                        </tr>
-                                    ))}
-                                    {!data?.activeTablesList?.length && (
-                                        <tr><td colSpan={4} className="empty-state">No active tables at the moment</td></tr>
-                                    )}
-                                </tbody>
-                            </table>
-                        </div>
+                                ))}
+                                {!data?.activeTablesList?.length && (
+                                    <tr><td colSpan={4} className="empty-state">No active tables at the moment</td></tr>
+                                )}
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </AppLayout>

@@ -1,13 +1,17 @@
 'use client';
 import React, { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import AppLayout from '@/components/AppLayout';
+import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useSettings } from '@/contexts/SettingsContext';
-import { Search, Plus, Minus, Trash2, CreditCard, ChevronDown } from 'lucide-react';
+import { Search, Plus, Minus, Trash2, CreditCard } from 'lucide-react';
 import { formatCurrency } from '@/lib/currency';
 
 export default function OrdersPage() {
+    const { user, loading: authLoading } = useAuth();
     const { settings } = useSettings();
+    const router = useRouter();
     const [categories, setCategories] = useState<any[]>([]);
     const [menuItems, setMenuItems] = useState<any[]>([]);
     const [tables, setTables] = useState<any[]>([]);
@@ -27,6 +31,8 @@ export default function OrdersPage() {
     const [submitting, setSubmitting] = useState(false);
 
     useEffect(() => {
+        if (authLoading || user?.role === 'waiter') return;
+
         Promise.all([
             fetch('/api/categories').then(r => r.json()),
             fetch('/api/menu').then(r => r.json()),
@@ -48,7 +54,13 @@ export default function OrdersPage() {
                 }
             }
         }).catch(() => setLoading(false));
-    }, []);
+    }, [authLoading, user?.role]);
+
+    useEffect(() => {
+        if (!authLoading && user?.role === 'waiter') {
+            router.replace('/tables');
+        }
+    }, [authLoading, router, user?.role]);
 
     const filteredItems = menuItems.filter(item => {
         const matchesCat = activeCategory === 'all' || item.categoryId === activeCategory;
@@ -170,7 +182,9 @@ export default function OrdersPage() {
         }
     };
 
-    if (loading) return <AppLayout><div className="loading-spinner" style={{ margin: '100px auto' }} /></AppLayout>;
+    if (authLoading || user?.role === 'waiter' || loading) {
+        return <AppLayout><div className="loading-spinner" style={{ margin: '100px auto' }} /></AppLayout>;
+    }
 
     return (
         <AppLayout>
