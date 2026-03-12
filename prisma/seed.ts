@@ -34,6 +34,14 @@ async function main() {
         create: { email: 'manager@rms.com', name: 'Sarah Manager', password: managerPassword, role: 'manager' },
     });
 
+    // Create waiter
+    const waiterPassword = await bcrypt.hash('waiter123', 12);
+    await prisma.user.upsert({
+        where: { email: 'waiter@rms.com' },
+        update: {},
+        create: { email: 'waiter@rms.com', name: 'James Waiter', password: waiterPassword, role: 'waiter' },
+    });
+
     // Create kitchen staff
     const kitchenPassword = await bcrypt.hash('kitchen123', 12);
     await prisma.user.upsert({
@@ -179,6 +187,7 @@ async function main() {
     console.log('\nDemo accounts:');
     console.log('  Admin:   admin@rms.com / admin123');
     console.log('  Manager: manager@rms.com / manager123');
+    console.log('  Waiter:  waiter@rms.com / waiter123');
     console.log('  Kitchen: kitchen@rms.com / kitchen123');
     console.log('  Cashier: cashier@rms.com / cashier123');
 }
