@@ -76,6 +76,9 @@ model Table {
   capacity     Int
   section      String?
   status       String   @default("available") // available, occupied, reserved, cleaning
+  layoutX      Float?
+  layoutY      Float?
+  shape        String?  @default("rect")
   mergeGroupId String?  // shared UUID for all tables in a merged group
   qrCode       String?
   createdAt    DateTime @default(now())

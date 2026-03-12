@@ -1,13 +1,16 @@
 'use client';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import AppLayout from '@/components/AppLayout';
 import { useToast } from '@/contexts/ToastContext';
+import { useAuth } from '@/contexts/AuthContext';
+import { useSettings } from '@/contexts/SettingsContext';
 import OrderModal from '@/components/OrderModal';
 import {
     GitMerge, UtensilsCrossed, ShoppingBag, Truck,
     CalendarDays, Printer, RefreshCw, ZoomIn, ZoomOut,
-    Users, X, CheckCircle, ArrowRight, Link
+    Users, X, CheckCircle, ArrowRight, Link, Plus, Pencil, Trash2
 } from 'lucide-react';
+import { formatCurrency } from '@/lib/currency';
 
 /* ─── Table positions as % of canvas (matching Figma layout exactly) ──────── */
 const TABLE_LAYOUT: Record<number, { x: number; y: number; shape: 'rect' | 'circle' }> = {
@@ -24,6 +27,28 @@ const TABLE_LAYOUT: Record<number, { x: number; y: number; shape: 'rect' | 'circ
     11: { x: 47, y: 60, shape: 'rect' },  // Kabala
     12: { x: 65, y: 63, shape: 'rect' },  // Mile 91
 };
+
+function getTableLayout(table: any) {
+    if (typeof table.layoutX === 'number' && typeof table.layoutY === 'number') {
+        return {
+            x: table.layoutX,
+            y: table.layoutY,
+            shape: (table.shape === 'circle' ? 'circle' : 'rect') as 'rect' | 'circle',
+        };
+    }
+
+    if (TABLE_LAYOUT[table.number]) return {
+        ...TABLE_LAYOUT[table.number],
+        shape: (table.shape === 'circle' ? 'circle' : TABLE_LAYOUT[table.number].shape) as 'rect' | 'circle',
+    };
+
+    const index = Math.max(0, table.number - Object.keys(TABLE_LAYOUT).length - 1);
+    return {
+        x: 4 + (index % 4) * 18,
+        y: 78 + Math.floor(index / 4) * 16,
+        shape: (table.shape === 'circle' ? 'circle' : 'rect') as 'rect' | 'circle',
+    };
+}
 
 function getElapsedMinutes(orders: any[]): number | null {
     if (!orders || orders.length === 0) return null;
@@ -115,8 +140,22 @@ function CircleSeats({ r, capacity, color }: { r: number; capacity: number; colo
 
 /* ─── Single Table Pod ──────────────────────────────────────────────────────*/
 type MergeHighlight = 'none' | 'source' | 'target' | 'dim';
-function TablePod({ table, onClick, mergeHighlight = 'none' }: { table: any; onClick: () => void; mergeHighlight?: MergeHighlight }) {
-    const layout = TABLE_LAYOUT[table.number] || { x: 0, y: 0, shape: 'rect' };
+function TablePod({
+    table,
+    onClick,
+    mergeHighlight = 'none',
+    isAdmin = false,
+    onEdit,
+    onDelete,
+}: {
+    table: any;
+    onClick: () => void;
+    mergeHighlight?: MergeHighlight;
+    isAdmin?: boolean;
+    onEdit?: (table: any) => void;
+    onDelete?: (table: any) => void;
+}) {
+    const layout = getTableLayout(table);
     const elapsed = getElapsedMinutes(table.orders);
     const tok = getTokens(table.status, elapsed);
     const total = table.orders?.reduce((s: number, o: any) => s + (o.total || 0), 0) || 0;
@@ -186,6 +225,31 @@ function TablePod({ table, onClick, mergeHighlight = 'none' }: { table: any; onC
             }}
                 className="table-pod-body"
             >
+                {isAdmin && (
+                    <div style={{ position: 'absolute', top: 8, right: 8, display: 'flex', gap: 6, zIndex: 3 }}>
+                        <button
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                onEdit?.(table);
+                            }}
+                            style={{ background: 'rgba(15,23,42,0.92)', border: '1px solid rgba(148,163,184,0.25)', color: '#e2e8f0', borderRadius: 8, padding: 6, display: 'flex', cursor: 'pointer' }}
+                            title="Edit table"
+                        >
+                            <Pencil size={12} />
+                        </button>
+                        <button
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                onDelete?.(table);
+                            }}
+                            style={{ background: 'rgba(69,10,10,0.92)', border: '1px solid rgba(239,68,68,0.35)', color: '#fca5a5', borderRadius: 8, padding: 6, display: 'flex', cursor: 'pointer' }}
+                            title="Delete table"
+                        >
+                            <Trash2 size={12} />
+                        </button>
+                    </div>
+                )}
+
                 {/* Seat indicators */}
                 {isCircle
                     ? <CircleSeats r={r} capacity={table.capacity} color={tok.seat} />
@@ -246,11 +310,21 @@ function TablePod({ table, onClick, mergeHighlight = 'none' }: { table: any; onC
 
 /* ─── Page ──────────────────────────────────────────────────────────────────*/
 export default function TablesPage() {
+    const { user } = useAuth();
+    const { settings } = useSettings();
+    const canvasRef = useRef<HTMLDivElement | null>(null);
     const [tables, setTables] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [selectedTable, setSelectedTable] = useState<any>(null);
     const [zoom, setZoom] = useState(100);
     const toast = useToast();
+    const [isTableModalOpen, setIsTableModalOpen] = useState(false);
+    const [tableModalMode, setTableModalMode] = useState<'add' | 'edit'>('add');
+    const [editingTable, setEditingTable] = useState<any>(null);
+    const [savingTable, setSavingTable] = useState(false);
+    const [tableForm, setTableForm] = useState({ number: '', section: '', capacity: '4', status: 'available', shape: 'rect' });
+    const [placingTable, setPlacingTable] = useState<any>(null);
+    const [savingPlacement, setSavingPlacement] = useState(false);
 
     // ── Merge state ────────────────────────────────────────────────────────
     type MergeStep = 'idle' | 'selectSource' | 'selectTarget' | 'confirm';
@@ -263,11 +337,109 @@ export default function TablesPage() {
     const cancelMerge = () => { setMergeStep('idle'); setMergeSource(null); setMergeTarget(null); };
 
     const fetchTables = () => {
-        fetch('/api/tables')
+        return fetch('/api/tables')
             .then(res => res.json())
             .then(data => { setTables(data); setLoading(false); });
     };
     useEffect(() => { fetchTables(); const i = setInterval(fetchTables, 30000); return () => clearInterval(i); }, []);
+
+    const openAddTableModal = () => {
+        setTableModalMode('add');
+        setEditingTable(null);
+        setTableForm({ number: '', section: '', capacity: '4', status: 'available', shape: 'rect' });
+        setIsTableModalOpen(true);
+    };
+
+    const openEditTableModal = (table: any) => {
+        setTableModalMode('edit');
+        setEditingTable(table);
+        setTableForm({
+            number: String(table.number),
+            section: table.section || '',
+            capacity: String(table.capacity || 4),
+            status: table.status || 'available',
+            shape: table.shape || 'rect',
+        });
+        setIsTableModalOpen(true);
+    };
+
+    const submitTableForm = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setSavingTable(true);
+
+        const payload = {
+            number: Number(tableForm.number),
+            section: tableForm.section.trim(),
+            capacity: Number(tableForm.capacity),
+            status: tableForm.status,
+            shape: tableForm.shape,
+        };
+
+        try {
+            const res = await fetch(tableModalMode === 'add' ? '/api/tables' : `/api/tables/${editingTable.id}`, {
+                method: tableModalMode === 'add' ? 'POST' : 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || `Unable to ${tableModalMode} table`);
+
+            toast('success', tableModalMode === 'add' ? 'Table created' : 'Table updated');
+            setIsTableModalOpen(false);
+            await fetchTables();
+        } catch (error: any) {
+            toast('error', error.message || 'Unable to save table');
+        } finally {
+            setSavingTable(false);
+        }
+    };
+
+    const deleteTable = async (table: any) => {
+        if (!window.confirm(`Delete ${table.section || `Table ${table.number}`}?`)) return;
+
+        try {
+            const res = await fetch(`/api/tables/${table.id}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Unable to delete table');
+
+            toast('success', 'Table deleted');
+            await fetchTables();
+        } catch (error: any) {
+            toast('error', error.message || 'Unable to delete table');
+        }
+    };
+
+    const beginTablePlacement = (table: any) => {
+        setPlacingTable(table);
+        toast('info', `Click a spot on the floor to place ${table.section || `Table ${table.number}`}`);
+    };
+
+    const placeTable = async (event: React.MouseEvent<HTMLDivElement>) => {
+        if (!placingTable || !canvasRef.current) return;
+
+        const rect = canvasRef.current.getBoundingClientRect();
+        const x = ((event.clientX - rect.left) / rect.width) * 100;
+        const y = ((event.clientY - rect.top) / rect.height) * 100;
+
+        setSavingPlacement(true);
+        try {
+            const res = await fetch(`/api/tables/${placingTable.id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ layoutX: Number(x.toFixed(2)), layoutY: Number(y.toFixed(2)) }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Unable to place table');
+
+            toast('success', `${placingTable.section || `Table ${placingTable.number}`} positioned`);
+            setPlacingTable(null);
+            await fetchTables();
+        } catch (error: any) {
+            toast('error', error.message || 'Unable to save table position');
+        } finally {
+            setSavingPlacement(false);
+        }
+    };
 
     // Canvas click handler — routes to merge selection or order modal
     const handleTableClick = (table: any) => {
@@ -346,7 +518,7 @@ export default function TablesPage() {
                 <div style={{ display: 'flex', gap: 20, fontSize: 13, color: 'var(--text-secondary)' }}>
                     <span><b style={{ color: '#fff' }}>{counts.seated}</b> Dine-in</span>
                     <span><b style={{ color: '#fff' }}>{counts.ordered}</b> Ordered</span>
-                    <span style={{ color: '#22c55e', fontWeight: 700 }}>${totalRevenu.toFixed(0)} Revenue</span>
+                    <span style={{ color: '#22c55e', fontWeight: 700 }}>{formatCurrency(totalRevenu, settings.currencySymbol)} Revenue</span>
                 </div>
             </div>
 
@@ -362,6 +534,29 @@ export default function TablesPage() {
                     position: 'relative',
                     overflow: 'hidden',
                 }}>
+                    {placingTable && (
+                        <div style={{
+                            position: 'absolute',
+                            top: 12,
+                            right: 12,
+                            zIndex: 20,
+                            background: savingPlacement ? '#1d4ed8' : '#2563eb',
+                            color: '#fff',
+                            borderRadius: 12,
+                            padding: '8px 12px',
+                            fontSize: 12,
+                            fontWeight: 700,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                        }}>
+                            {savingPlacement ? 'Saving placement…' : `Placing ${placingTable.section || `Table ${placingTable.number}`}`}
+                            <button onClick={() => setPlacingTable(null)} style={{ background: 'rgba(255,255,255,0.18)', border: 'none', color: '#fff', borderRadius: '50%', width: 20, height: 20, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <X size={12} />
+                            </button>
+                        </div>
+                    )}
+
                     {/* Dot grid */}
                     <div style={{
                         position: 'absolute', inset: 0,
@@ -395,16 +590,31 @@ export default function TablesPage() {
                         transform: `scale(${zoom / 100})`,
                         transformOrigin: 'top left',
                         transition: 'transform 0.2s',
-                        cursor: mergeStep !== 'idle' ? 'crosshair' : 'default',
+                        cursor: mergeStep !== 'idle' || placingTable ? 'crosshair' : 'default',
                     }}>
-                        {tables.map((table) => {
+                        <div
+                            ref={canvasRef}
+                            onClick={placeTable}
+                            style={{ position: 'absolute', inset: 0 }}
+                        >
+                            {tables.map((table) => {
                             const isSource = mergeSource?.id === table.id;
                             const isTarget = mergeTarget?.id === table.id;
                             return (
                                 <TablePod
                                     key={table.id}
                                     table={table}
-                                    onClick={() => handleTableClick(table)}
+                                    onClick={() => {
+                                        if (placingTable) {
+                                            setPlacingTable(table);
+                                            toast('info', `Click a new spot on the floor to place ${table.section || `Table ${table.number}`}`);
+                                            return;
+                                        }
+                                        handleTableClick(table);
+                                    }}
+                                    isAdmin={user?.role === 'admin'}
+                                    onEdit={openEditTableModal}
+                                    onDelete={deleteTable}
                                     mergeHighlight={
                                         isSource ? 'source'
                                             : isTarget ? 'target'
@@ -414,7 +624,8 @@ export default function TablesPage() {
                                     }
                                 />
                             );
-                        })}
+                            })}
+                        </div>
                     </div>
 
                     {/* Zoom + refresh */}
@@ -518,6 +729,56 @@ export default function TablesPage() {
                             </button>
                         </div>
                     </div>
+
+                    {user?.role === 'admin' && (
+                        <div style={{ background: 'var(--bg-card)', borderRadius: 14, border: '1px solid var(--border)', padding: 14 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.2, color: 'var(--text-muted)' }}>Admin Table Control</div>
+                                <button
+                                    onClick={openAddTableModal}
+                                    style={{ background: '#2563eb', border: 'none', borderRadius: 8, padding: '6px 8px', color: '#fff', display: 'flex', alignItems: 'center', cursor: 'pointer' }}
+                                >
+                                    <Plus size={14} />
+                                </button>
+                            </div>
+
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 260, overflowY: 'auto' }}>
+                                {tables.map((table) => (
+                                    <div key={table.id} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 10, background: 'var(--surface-active)' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
+                                            <div>
+                                                <div style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>{table.section || `Table ${table.number}`}</div>
+                                            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>#{table.number} • {table.capacity} seats • {table.status}</div>
+                                        </div>
+                                        <div style={{ display: 'flex', gap: 6 }}>
+                                                <button
+                                                    onClick={() => beginTablePlacement(table)}
+                                                    style={{ background: 'none', border: '1px solid #2563eb', color: '#93c5fd', borderRadius: 8, padding: 6, cursor: 'pointer', display: 'flex' }}
+                                                    title="Place table on floor"
+                                                >
+                                                    <Plus size={13} />
+                                                </button>
+                                                <button
+                                                    onClick={() => openEditTableModal(table)}
+                                                    style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: 8, padding: 6, cursor: 'pointer', display: 'flex' }}
+                                                    title="Edit table"
+                                                >
+                                                    <Pencil size={13} />
+                                                </button>
+                                                <button
+                                                    onClick={() => deleteTable(table)}
+                                                    style={{ background: 'none', border: '1px solid rgba(239,68,68,0.35)', color: '#ef4444', borderRadius: 8, padding: 6, cursor: 'pointer', display: 'flex' }}
+                                                    title="Delete table"
+                                                >
+                                                    <Trash2 size={13} />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -559,6 +820,78 @@ export default function TablesPage() {
                     table={selectedTable}
                     onClose={() => { setSelectedTable(null); fetchTables(); }}
                 />
+            )}
+
+            {isTableModalOpen && (
+                <div className="modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 24 }}>
+                    <div className="card" style={{ width: '100%', maxWidth: 420, position: 'relative' }}>
+                        <button onClick={() => setIsTableModalOpen(false)} style={{ position: 'absolute', top: 16, right: 16, background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                            <X size={18} />
+                        </button>
+
+                        <h3 className="card-title mb-4">{tableModalMode === 'add' ? 'Create Table' : 'Edit Table'}</h3>
+
+                        <form onSubmit={submitTableForm} className="flex flex-col gap-4">
+                            <div>
+                                <label className="block text-sm text-muted mb-1">Table Number</label>
+                                <input
+                                    required
+                                    min={1}
+                                    type="number"
+                                    className="form-input"
+                                    value={tableForm.number}
+                                    onChange={e => setTableForm({ ...tableForm, number: e.target.value })}
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-sm text-muted mb-1">Section Name</label>
+                                <input
+                                    required
+                                    type="text"
+                                    className="form-input"
+                                    value={tableForm.section}
+                                    onChange={e => setTableForm({ ...tableForm, section: e.target.value })}
+                                    placeholder="Bo, Kenema, Waterfront..."
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-sm text-muted mb-1">Capacity</label>
+                                <input
+                                    required
+                                    min={1}
+                                    type="number"
+                                    className="form-input"
+                                    value={tableForm.capacity}
+                                    onChange={e => setTableForm({ ...tableForm, capacity: e.target.value })}
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-sm text-muted mb-1">Status</label>
+                                <select className="form-select" value={tableForm.status} onChange={e => setTableForm({ ...tableForm, status: e.target.value })}>
+                                    <option value="available">Available</option>
+                                    <option value="reserved">Reserved</option>
+                                    <option value="occupied">Occupied</option>
+                                    <option value="cleaning">Cleaning</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm text-muted mb-1">Shape</label>
+                                <select className="form-select" value={tableForm.shape} onChange={e => setTableForm({ ...tableForm, shape: e.target.value })}>
+                                    <option value="rect">Rectangle</option>
+                                    <option value="circle">Circle</option>
+                                </select>
+                            </div>
+
+                            <button type="submit" className="btn btn-primary mt-2 justify-center" style={{ padding: 12 }} disabled={savingTable}>
+                                {savingTable ? 'Saving…' : tableModalMode === 'add' ? 'Create Table' : 'Save Changes'}
+                            </button>
+                        </form>
+                    </div>
+                </div>
             )}
 
             <style>{`

@@ -2,7 +2,8 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { formatLeones } from '@/lib/currency';
+import { useSettings } from '@/contexts/SettingsContext';
+import { formatCurrency } from '@/lib/currency';
 
 type PaymentStatusResponse = {
   paymentAttempt?: {
@@ -26,6 +27,7 @@ export function SuccessClient({
   orderId?: string;
   callbackState?: string;
 }) {
+  const { settings } = useSettings();
   const hasContext = Boolean(attemptId && orderId && callbackState);
   const [data, setData] = useState<PaymentStatusResponse | null>(hasContext ? null : { error: 'Missing payment context.' });
   const [loading, setLoading] = useState(hasContext);
@@ -85,7 +87,7 @@ export function SuccessClient({
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginTop: 12, flexWrap: 'wrap' }}>
                 <span>Total</span>
-                <strong>{formatLeones(data.paymentAttempt.order.total)}</strong>
+                <strong>{formatCurrency(data.paymentAttempt.order.total, settings.currencySymbol)}</strong>
               </div>
             </>
           )}

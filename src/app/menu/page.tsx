@@ -3,7 +3,9 @@ import React, { useCallback, useEffect, useState } from 'react';
 import AppLayout from '@/components/AppLayout';
 import { Plus, Edit2, Trash2, Search, Utensils, X, Save, ChefHat, Info } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
-import { formatLeones } from '@/lib/currency';
+import { useAuth } from '@/contexts/AuthContext';
+import { useSettings } from '@/contexts/SettingsContext';
+import { formatCurrency } from '@/lib/currency';
 
 type Category = {
     id: string;
@@ -47,6 +49,8 @@ type ItemFormState = {
 };
 
 export default function MenuPage() {
+    const { user } = useAuth();
+    const { settings } = useSettings();
     const [items, setItems] = useState<MenuItem[]>([]);
     const [categories, setCategories] = useState<Category[]>([]);
     const [inventory, setInventory] = useState<InventoryItem[]>([]);
@@ -65,6 +69,7 @@ export default function MenuPage() {
     const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
     const [recipeIngredients, setRecipeIngredients] = useState<RecipeIngredient[]>([]);
     const [newIngredient, setNewIngredient] = useState({ inventoryId: '', quantityUsed: 1 });
+    const canManageMenu = user?.role === 'admin' || user?.role === 'manager';
 
     const fetchData = useCallback(async () => {
         try {
@@ -261,24 +266,26 @@ export default function MenuPage() {
                     </h1>
                     <p className="text-muted">Manage your dishes, drinks, and their recipe linkages.</p>
                 </div>
-                <div className="flex gap-2">
-                    <button className="btn btn-secondary" onClick={() => {
-                        setCategoryForm({ name: '', icon: '🍽️', sortOrder: categories.length });
-                        setIsCategoryModalOpen(true);
-                    }}>
-                        <Plus size={16} /> Add Category
-                    </button>
-                    <button className="btn btn-primary" onClick={() => {
-                        setItemForm({ id: '', name: '', description: '', price: 0, cost: 0, categoryId: categories[0]?.id || '', isPopular: false });
-                        setSelectedItem(null);
-                        setRecipeIngredients([]);
-                        setNewIngredient({ inventoryId: '', quantityUsed: 1 });
-                        setShowRecipeEditor(false);
-                        setIsItemModalOpen(true);
-                    }}>
-                        <Plus size={16} /> Add Item
-                    </button>
-                </div>
+                {canManageMenu && (
+                    <div className="flex gap-2">
+                        <button className="btn btn-secondary" onClick={() => {
+                            setCategoryForm({ name: '', icon: '🍽️', sortOrder: categories.length });
+                            setIsCategoryModalOpen(true);
+                        }}>
+                            <Plus size={16} /> Add Category
+                        </button>
+                        <button className="btn btn-primary" onClick={() => {
+                            setItemForm({ id: '', name: '', description: '', price: 0, cost: 0, categoryId: categories[0]?.id || '', isPopular: false });
+                            setSelectedItem(null);
+                            setRecipeIngredients([]);
+                            setNewIngredient({ inventoryId: '', quantityUsed: 1 });
+                            setShowRecipeEditor(false);
+                            setIsItemModalOpen(true);
+                        }}>
+                            <Plus size={16} /> Add Item
+                        </button>
+                    </div>
+                )}
             </div>
 
             <div className="flex gap-4 mb-6">
@@ -312,38 +319,40 @@ export default function MenuPage() {
                                             {item.category?.icon} {item.category?.name}
                                         </span>
                                     </td>
-                                    <td className="font-bold text-success">{formatLeones(item.price)}</td>
+                                    <td className="font-bold text-success">{formatCurrency(item.price, settings.currencySymbol)}</td>
                                     <td>
                                         {item.isPopular ? <span className="badge available">⭐ Popular</span> : <span className="badge" style={{ background: 'rgba(255,255,255,0.05)' }}>Standard</span>}
                                     </td>
                                     <td>
-                                        <div className="flex gap-2 justify-end">
-                                            <button
-                                                className="btn btn-icon btn-secondary"
-                                                title="Edit"
-                                                onClick={() => {
-                                                    setItemForm({
-                                                        id: item.id,
-                                                        name: item.name,
-                                                        description: item.description || '',
-                                                        price: item.price,
-                                                        cost: item.cost || 0,
-                                                        categoryId: item.categoryId,
-                                                        isPopular: item.isPopular,
-                                                    });
-                                                    setSelectedItem(item);
-                                                    setRecipeIngredients([]);
-                                                    setNewIngredient({ inventoryId: '', quantityUsed: 1 });
-                                                    setShowRecipeEditor(false);
-                                                    setIsItemModalOpen(true);
-                                                }}
-                                            >
-                                                <Edit2 size={14} />
-                                            </button>
-                                            <button className="btn btn-icon btn-danger" title="Delete" onClick={() => handleDeleteItem(item.id)}>
-                                                <Trash2 size={14} />
-                                            </button>
-                                        </div>
+                                        {canManageMenu && (
+                                            <div className="flex gap-2 justify-end">
+                                                <button
+                                                    className="btn btn-icon btn-secondary"
+                                                    title="Edit"
+                                                    onClick={() => {
+                                                        setItemForm({
+                                                            id: item.id,
+                                                            name: item.name,
+                                                            description: item.description || '',
+                                                            price: item.price,
+                                                            cost: item.cost || 0,
+                                                            categoryId: item.categoryId,
+                                                            isPopular: item.isPopular,
+                                                        });
+                                                        setSelectedItem(item);
+                                                        setRecipeIngredients([]);
+                                                        setNewIngredient({ inventoryId: '', quantityUsed: 1 });
+                                                        setShowRecipeEditor(false);
+                                                        setIsItemModalOpen(true);
+                                                    }}
+                                                >
+                                                    <Edit2 size={14} />
+                                                </button>
+                                                <button className="btn btn-icon btn-danger" title="Delete" onClick={() => handleDeleteItem(item.id)}>
+                                                    <Trash2 size={14} />
+                                                </button>
+                                            </div>
+                                        )}
                                     </td>
                                 </tr>
                             ))}

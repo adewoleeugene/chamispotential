@@ -29,7 +29,6 @@ export default function LoginPage() {
             admin: { email: 'admin@rms.com', password: 'admin123' },
             manager: { email: 'manager@rms.com', password: 'manager123' },
             kitchen: { email: 'kitchen@rms.com', password: 'kitchen123' },
-            cashier: { email: 'cashier@rms.com', password: 'cashier123' },
             waiter: { email: 'waiter@rms.com', password: 'waiter123' },
         };
         const d = demos[role];
@@ -97,14 +96,14 @@ export default function LoginPage() {
                         Demo Accounts
                     </p>
                     <div className="grid-2" style={{ gap: 8 }}>
-                        {['admin', 'manager', 'waiter', 'kitchen', 'cashier'].map(role => (
+                        {['admin', 'manager', 'waiter', 'kitchen'].map(role => (
                             <button
                                 key={role}
                                 onClick={() => demoLogin(role)}
                                 className="btn btn-secondary btn-sm"
                                 style={{ justifyContent: 'center' }}
                             >
-                                {role === 'admin' ? '👑' : role === 'manager' ? '📊' : role === 'kitchen' ? '👨‍🍳' : role === 'waiter' ? '🏃' : '💳'} {role.charAt(0).toUpperCase() + role.slice(1)}
+                                {role === 'admin' ? '👑' : role === 'manager' ? '📊' : role === 'kitchen' ? '👨‍🍳' : '🏃'} {role.charAt(0).toUpperCase() + role.slice(1)}
                             </button>
                         ))}
                     </div>

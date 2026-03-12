@@ -20,7 +20,7 @@ export default function StaffPage() {
     const fetchStaff = () => {
         fetch('/api/staff')
             .then(r => r.json())
-            .then(d => { setStaff(Array.isArray(d) ? d : []); setLoading(false); })
+            .then(d => { setStaff(Array.isArray(d) ? d.filter((member: any) => member.role !== 'cashier') : []); setLoading(false); })
             .catch(() => { setStaff([]); setLoading(false); });
     };
 
@@ -96,7 +96,6 @@ export default function StaffPage() {
             case 'admin': return { bg: 'rgba(239,68,68,0.1)', color: '#ef4444' };
             case 'manager': return { bg: 'rgba(59,130,246,0.1)', color: '#3b82f6' };
             case 'kitchen': return { bg: 'rgba(249,115,22,0.1)', color: 'var(--brand-400)' };
-            case 'cashier': return { bg: 'rgba(16,185,129,0.1)', color: '#10b981' };
             default: return { bg: 'rgba(255,255,255,0.05)', color: 'var(--text-secondary)' };
         }
     };
@@ -195,7 +194,6 @@ export default function StaffPage() {
                                 <label className="block text-sm text-muted mb-1">Role / Access Level</label>
                                 <select className="form-select" value={formData.role} onChange={e => setFormData({ ...formData, role: e.target.value })}>
                                     <option value="waiter">Waiter / Floor Staff</option>
-                                    <option value="cashier">Cashier</option>
                                     <option value="kitchen">Kitchen Staff</option>
                                     <option value="manager">Manager</option>
                                     {(user?.role === 'admin' || formData.role === 'admin') && <option value="admin">Administrator</option>}

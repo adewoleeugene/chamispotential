@@ -3,9 +3,11 @@ import React, { useEffect, useState } from 'react';
 import AppLayout from '@/components/AppLayout';
 import { Plus, Edit2, Trash2, Search, AlertTriangle } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
-import { formatLeones } from '@/lib/currency';
+import { useSettings } from '@/contexts/SettingsContext';
+import { formatCurrency } from '@/lib/currency';
 
 export default function InventoryPage() {
+    const { settings } = useSettings();
     const [items, setItems] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState('');
@@ -73,7 +75,7 @@ export default function InventoryPage() {
                                             </div>
                                         </div>
                                     </td>
-                                    <td className="font-bold">{formatLeones(item.cost)} /{item.unit}</td>
+                                    <td className="font-bold">{formatCurrency(item.cost, settings.currencySymbol)} /{item.unit}</td>
                                     <td className="text-muted text-sm">{item.supplier || '-'}</td>
                                     <td>
                                         <div className="flex gap-2">

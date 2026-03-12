@@ -9,10 +9,10 @@ import {
 } from 'lucide-react';
 
 const navItems = [
-    { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', section: 'main', roles: ['admin', 'manager', 'waiter', 'cashier'] },
-    { href: '/orders', icon: ShoppingCart, label: 'Orders', section: 'main', roles: ['admin', 'manager', 'cashier'] },
+    { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', section: 'main', roles: ['admin', 'manager', 'waiter'] },
+    { href: '/orders', icon: ShoppingCart, label: 'Orders', section: 'main', roles: ['admin', 'manager', 'waiter'] },
     { href: '/tables', icon: Table2, label: 'Tables', section: 'main', roles: ['admin', 'manager', 'waiter'] },
-    { href: '/menu', icon: UtensilsCrossed, label: 'Menu', section: 'main', roles: ['admin', 'manager', 'cashier'] },
+    { href: '/menu', icon: UtensilsCrossed, label: 'Menu', section: 'main', roles: ['admin', 'manager'] },
     { href: '/reservations', icon: CalendarDays, label: 'Reservations', section: 'main', roles: ['admin', 'manager'] },
     { href: '/kitchen', icon: ChefHat, label: 'Kitchen', section: 'main', roles: ['admin', 'manager', 'kitchen'] },
     { href: '/inventory', icon: Package, label: 'Inventory', section: 'operations', roles: ['admin', 'manager'] },

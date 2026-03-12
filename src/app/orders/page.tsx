@@ -2,10 +2,12 @@
 import React, { useEffect, useState } from 'react';
 import AppLayout from '@/components/AppLayout';
 import { useToast } from '@/contexts/ToastContext';
+import { useSettings } from '@/contexts/SettingsContext';
 import { Search, Plus, Minus, Trash2, CreditCard, ChevronDown } from 'lucide-react';
-import { formatLeones } from '@/lib/currency';
+import { formatCurrency } from '@/lib/currency';
 
 export default function OrdersPage() {
+    const { settings } = useSettings();
     const [categories, setCategories] = useState<any[]>([]);
     const [menuItems, setMenuItems] = useState<any[]>([]);
     const [tables, setTables] = useState<any[]>([]);
@@ -77,7 +79,8 @@ export default function OrdersPage() {
     const removeFromCart = (id: string) => setCart(prev => prev.filter(i => i.id !== id));
 
     const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    const tax = (subtotal - discount) * 0.1;
+    const taxRate = Number(settings.taxRate || '10') / 100;
+    const tax = (subtotal - discount) * taxRate;
     const total = subtotal + tax - discount;
 
     const refreshOrders = async () => {
@@ -203,7 +206,7 @@ export default function OrdersPage() {
                                     <div className="menu-item-name">{item.name}</div>
                                     <div className="menu-item-desc">{item.description}</div>
                                     <div className="menu-item-footer mt-2">
-                                        <div className="menu-item-price">{formatLeones(item.price)}</div>
+                                        <div className="menu-item-price">{formatCurrency(item.price, settings.currencySymbol)}</div>
                                         <div className="menu-item-cat">{item.category?.name}</div>
                                     </div>
                                 </div>
@@ -262,7 +265,7 @@ export default function OrdersPage() {
                                             <span className={`badge ${order.paymentStatus}`}>{order.paymentStatus}</span>
                                         </div>
                                         <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 8 }}>
-                                            {order.table?.number ? `Table ${order.table.number}` : order.customerName || order.type} • {formatLeones(order.total)}
+                                            {order.table?.number ? `Table ${order.table.number}` : order.customerName || order.type} • {formatCurrency(order.total, settings.currencySymbol)}
                                         </div>
                                         {order.status === 'draft' ? (
                                             <button className="btn btn-success w-full" onClick={() => confirmManualPayment(order.id)} style={{ justifyContent: 'center', padding: 10 }}>
@@ -279,7 +282,7 @@ export default function OrdersPage() {
                             <div key={item.id} className="cart-item">
                                 <div className="cart-item-info">
                                     <div className="cart-item-name">{item.name}</div>
-                                    <div className="cart-item-price">{formatLeones(item.price)}</div>
+                                    <div className="cart-item-price">{formatCurrency(item.price, settings.currencySymbol)}</div>
                                 </div>
                                 <div className="cart-qty-controls">
                                     <button className="qty-btn" onClick={() => updateQuantity(item.id, -1)}><Minus size={14} /></button>
@@ -296,10 +299,10 @@ export default function OrdersPage() {
 
                     <div className="pos-cart-footer">
                         <div className="cart-totals">
-                            <div className="cart-total-row"><span>Subtotal</span><span>{formatLeones(subtotal)}</span></div>
-                            <div className="cart-total-row"><span>Tax (10%)</span><span>{formatLeones(tax)}</span></div>
-                            {discount > 0 && <div className="cart-total-row" style={{ color: 'var(--success)' }}><span>Discount</span><span>-{formatLeones(discount)}</span></div>}
-                            <div className="cart-total-row grand-total"><span>Total</span><span>{formatLeones(total)}</span></div>
+                            <div className="cart-total-row"><span>Subtotal</span><span>{formatCurrency(subtotal, settings.currencySymbol)}</span></div>
+                            <div className="cart-total-row"><span>Tax ({Number(settings.taxRate || '10')}%)</span><span>{formatCurrency(tax, settings.currencySymbol)}</span></div>
+                            {discount > 0 && <div className="cart-total-row" style={{ color: 'var(--success)' }}><span>Discount</span><span>-{formatCurrency(discount, settings.currencySymbol)}</span></div>}
+                            <div className="cart-total-row grand-total"><span>Total</span><span>{formatCurrency(total, settings.currencySymbol)}</span></div>
                         </div>
 
                         <button className="btn btn-primary w-full" onClick={submitOrder} disabled={cart.length === 0 || submitting} style={{ padding: '12px', justifyContent: 'center', fontSize: 15 }}>

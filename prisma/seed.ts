@@ -50,14 +50,6 @@ async function main() {
         create: { email: 'kitchen@rms.com', name: 'Chef Marcus', password: kitchenPassword, role: 'kitchen' },
     });
 
-    // Create cashier
-    const cashierPassword = await bcrypt.hash('cashier123', 12);
-    await prisma.user.upsert({
-        where: { email: 'cashier@rms.com' },
-        update: {},
-        create: { email: 'cashier@rms.com', name: 'Emma Cashier', password: cashierPassword, role: 'cashier' },
-    });
-
     // Create categories
     const categories = [
         { name: 'Starters', color: '#FF6B6B', icon: '🥗', sortOrder: 1 },
@@ -189,7 +181,6 @@ async function main() {
     console.log('  Manager: manager@rms.com / manager123');
     console.log('  Waiter:  waiter@rms.com / waiter123');
     console.log('  Kitchen: kitchen@rms.com / kitchen123');
-    console.log('  Cashier: cashier@rms.com / cashier123');
 }
 
 main()

@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { Search, Plus, Minus, Trash2, CreditCard, X } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
-import { formatLeones } from '@/lib/currency';
+import { useSettings } from '@/contexts/SettingsContext';
+import { formatCurrency } from '@/lib/currency';
 
 export default function OrderModal({ table, onClose }: { table: any, onClose: () => void }) {
+    const { settings } = useSettings();
     const [categories, setCategories] = useState<any[]>([]);
     const [menuItems, setMenuItems] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
@@ -57,7 +59,8 @@ export default function OrderModal({ table, onClose }: { table: any, onClose: ()
     const removeFromCart = (id: string) => setCart(prev => prev.filter(i => i.id !== id));
 
     const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    const tax = subtotal * 0.1;
+    const taxRate = Number(settings.taxRate || '10') / 100;
+    const tax = subtotal * taxRate;
     const total = subtotal + tax;
 
     const submitOrder = async () => {
@@ -212,7 +215,7 @@ export default function OrderModal({ table, onClose }: { table: any, onClose: ()
                                         <div className="menu-item-body">
                                             <div className="menu-item-name" style={{ fontSize: 14 }}>{item.name}</div>
                                             <div className="menu-item-footer mt-2">
-                                                <div className="menu-item-price">{formatLeones(item.price)}</div>
+                                                <div className="menu-item-price">{formatCurrency(item.price, settings.currencySymbol)}</div>
                                             </div>
                                         </div>
                                     </div>
@@ -284,14 +287,14 @@ export default function OrderModal({ table, onClose }: { table: any, onClose: ()
                                                     <div key={item.id} className="cart-item" style={{ padding: '4px 0', opacity: 0.8 }}>
                                                         <div className="flex justify-between w-full">
                                                             <div className="cart-item-name" style={{ fontSize: 13 }}>{item.quantity}x {item.menuItem?.name || 'Item'}</div>
-                                                            <div className="cart-item-price" style={{ fontSize: 12 }}>{formatLeones(item.unitPrice * item.quantity)}</div>
+                                                            <div className="cart-item-price" style={{ fontSize: 12 }}>{formatCurrency(item.unitPrice * item.quantity, settings.currencySymbol)}</div>
                                                         </div>
                                                     </div>
                                                 ))}
                                             </div>
                                         ))}
                                         <div className="mt-2 text-right">
-                                            <span style={{ fontSize: 13, fontWeight: 'bold', color: 'var(--brand-500)' }}>Active Tab: {formatLeones(table.orders.reduce((sum: number, o: any) => sum + o.total, 0))}</span>
+                                            <span style={{ fontSize: 13, fontWeight: 'bold', color: 'var(--brand-500)' }}>Active Tab: {formatCurrency(table.orders.reduce((sum: number, o: any) => sum + o.total, 0), settings.currencySymbol)}</span>
                                         </div>
                                     </div>
                                 )}
@@ -301,7 +304,7 @@ export default function OrderModal({ table, onClose }: { table: any, onClose: ()
                                     <div key={item.id} className="cart-item" style={{ padding: '12px 0', borderBottom: '1px solid var(--border)' }}>
                                         <div className="cart-item-info">
                                             <div className="cart-item-name" style={{ fontSize: 13 }}>{item.name}</div>
-                                            <div className="cart-item-price" style={{ fontSize: 12 }}>{formatLeones(item.price)}</div>
+                                            <div className="cart-item-price" style={{ fontSize: 12 }}>{formatCurrency(item.price, settings.currencySymbol)}</div>
                                         </div>
                                         <div className="cart-qty-controls" style={{ gap: 8 }}>
                                             <button className="qty-btn" onClick={() => updateQuantity(item.id, -1)}><Minus size={12} /></button>
@@ -318,9 +321,9 @@ export default function OrderModal({ table, onClose }: { table: any, onClose: ()
 
                             <div className="pos-cart-footer" style={{ padding: 16, borderTop: '1px solid var(--border)' }}>
                                 <div className="cart-totals">
-                                    <div className="cart-total-row" style={{ fontSize: 13 }}><span>Subtotal</span><span>{formatLeones(subtotal)}</span></div>
-                                    <div className="cart-total-row" style={{ fontSize: 13 }}><span>Tax (10%)</span><span>{formatLeones(tax)}</span></div>
-                                    <div className="cart-total-row grand-total" style={{ fontSize: 16, marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}><span>Total</span><span>{formatLeones(total)}</span></div>
+                                    <div className="cart-total-row" style={{ fontSize: 13 }}><span>Subtotal</span><span>{formatCurrency(subtotal, settings.currencySymbol)}</span></div>
+                                    <div className="cart-total-row" style={{ fontSize: 13 }}><span>Tax ({Number(settings.taxRate || '10')}%)</span><span>{formatCurrency(tax, settings.currencySymbol)}</span></div>
+                                    <div className="cart-total-row grand-total" style={{ fontSize: 16, marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}><span>Total</span><span>{formatCurrency(total, settings.currencySymbol)}</span></div>
                                 </div>
 
                                 {editingOrderId ? (

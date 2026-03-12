@@ -3,12 +3,14 @@ import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/contexts/AuthContext';
+import { useSettings } from '@/contexts/SettingsContext';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { TrendingUp, Users, ShoppingBag, DollarSign, Clock, CheckCircle, Link } from 'lucide-react';
-import { formatLeones } from '@/lib/currency';
+import { formatCurrency } from '@/lib/currency';
 
 export default function Dashboard() {
     const { user } = useAuth();
+    const { settings } = useSettings();
     const router = useRouter();
     const [data, setData] = useState<any>(null);
     const [loading, setLoading] = useState(true);
@@ -138,7 +140,7 @@ export default function Dashboard() {
             <div className="stat-grid">
                 <div className="stat-card orange">
                     <div className="stat-icon-wrap orange"><DollarSign size={24} /></div>
-                    <div className="stat-value">{formatLeones(data?.revenue?.today || 0)}</div>
+                    <div className="stat-value">{formatCurrency(data?.revenue?.today || 0, settings.currencySymbol)}</div>
                     <div className="stat-label">Today's Revenue</div>
                     <div className="stat-trend up"><TrendingUp size={14} /> +12% from yesterday</div>
                 </div>
@@ -155,7 +157,7 @@ export default function Dashboard() {
                 </div>
                 <div className="stat-card purple">
                     <div className="stat-icon-wrap purple"><DollarSign size={24} /></div>
-                    <div className="stat-value">{formatLeones(data?.revenue?.month || 0)}</div>
+                    <div className="stat-value">{formatCurrency(data?.revenue?.month || 0, settings.currencySymbol)}</div>
                     <div className="stat-label">Monthly Revenue</div>
                 </div>
             </div>
@@ -214,7 +216,7 @@ export default function Dashboard() {
                                                 : 'Takeaway'}
                                         </td>
                                         <td><span className={`badge ${order.status}`}>{order.status}</span></td>
-                                        <td className="font-bold">{formatLeones(order.total)}</td>
+                                        <td className="font-bold">{formatCurrency(order.total, settings.currencySymbol)}</td>
                                     </tr>
                                 ))}
                                 {!data?.recentOrders?.length && (

@@ -7,6 +7,7 @@ import {
     consumeInventoryForOrder,
 } from '@/lib/inventory';
 import { activateOrderForService, isOperationalOrderStatus } from '@/lib/orders';
+import { getTaxRateDecimal } from '@/lib/runtime-settings';
 
 function auth(req: NextRequest) {
     const token = req.cookies.get('rms-token')?.value;
@@ -64,7 +65,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             });
 
             const subtotal = orderItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
-            const tax = subtotal * 0.1;
+            const taxRate = await getTaxRateDecimal();
+            const tax = subtotal * taxRate;
             const total = subtotal + tax;
 
             if (isOperationalOrderStatus(existingOrder.status)) {

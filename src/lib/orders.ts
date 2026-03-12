@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { consumeInventoryForOrder } from '@/lib/inventory';
+import { getTaxRateDecimal } from '@/lib/runtime-settings';
 
 export type OrderItemInput = {
   menuItemId: string;
@@ -47,7 +48,8 @@ export async function buildOrderPricing(tx: PrismaTx, items: OrderItemInput[], d
 
   const subtotal = orderItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
   const discountAmt = discount || 0;
-  const tax = (subtotal - discountAmt) * 0.1;
+  const taxRate = await getTaxRateDecimal();
+  const tax = (subtotal - discountAmt) * taxRate;
   const total = subtotal + tax - discountAmt;
 
   return { orderItems, subtotal, discountAmt, tax, total };
