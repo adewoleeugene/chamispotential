@@ -9,10 +9,14 @@ interface User {
     avatar?: string;
 }
 
+type LoginResult =
+    | { success: true; user: User }
+    | { success: false; error?: string };
+
 interface AuthContextType {
     user: User | null;
     loading: boolean;
-    login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+    login: (email: string, password: string) => Promise<LoginResult>;
     logout: () => Promise<void>;
     refresh: () => Promise<void>;
 }
@@ -37,7 +41,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     useEffect(() => { refresh(); }, []);
 
-    const login = async (email: string, password: string) => {
+    const login = async (email: string, password: string): Promise<LoginResult> => {
         const res = await fetch('/api/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -46,7 +50,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const data = await res.json();
         if (data.success) {
             setUser(data.user);
-            return { success: true };
+            return { success: true, user: data.user };
         }
         return { success: false, error: data.error };
     };

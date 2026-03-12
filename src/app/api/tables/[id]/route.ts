@@ -8,7 +8,11 @@ function auth(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-    if (!auth(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const user = auth(req);
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (user.role !== 'admin') {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
     const { id } = await params;
     const data = await req.json();
     const table = await prisma.table.update({ where: { id }, data });
@@ -17,7 +21,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
     const user = auth(req);
-    if (!user || !['admin', 'manager'].includes(user.role)) {
+    if (!user || user.role !== 'admin') {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
     const { id } = await params;

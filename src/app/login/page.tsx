@@ -17,7 +17,7 @@ export default function LoginPage() {
         setError('');
         const result = await login(email, password);
         if (result.success) {
-            router.push('/dashboard');
+            router.push(result.user.role === 'kitchen' ? '/kitchen' : '/dashboard');
         } else {
             setError(result.error || 'Login failed');
             setLoading(false);
