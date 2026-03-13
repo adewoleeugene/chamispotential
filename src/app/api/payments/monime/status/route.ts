@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { getRequestUser } from '@/lib/auth';
 import { refreshAttemptFromMonime } from '@/lib/monime-payments';
 
 export async function GET(req: NextRequest) {
+  const user = await getRequestUser(req);
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const url = new URL(req.url);
   const attemptId = url.searchParams.get('attemptId');
   const orderId = url.searchParams.get('orderId');
@@ -23,6 +29,7 @@ export async function GET(req: NextRequest) {
       order: {
         select: {
           id: true,
+          userId: true,
           orderNumber: true,
           paymentStatus: true,
           status: true,
@@ -34,6 +41,11 @@ export async function GET(req: NextRequest) {
 
   if (!existingAttempt) {
     return NextResponse.json({ error: 'Payment attempt not found' }, { status: 404 });
+  }
+
+  const canAccessAttempt = existingAttempt.order.userId === user.id || ['admin', 'manager'].includes(user.role);
+  if (!canAccessAttempt) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
   const attempt = refresh ? await refreshAttemptFromMonime(existingAttempt.id) : existingAttempt;

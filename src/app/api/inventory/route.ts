@@ -1,15 +1,44 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { verifyToken } from '@/lib/auth';
+import { getRequestUser } from '@/lib/auth';
 import { subDays } from 'date-fns';
 
-function auth(req: NextRequest) {
-    const token = req.cookies.get('rms-token')?.value;
-    return token ? verifyToken(token) : null;
+function normalizeInventoryPayload(input: Record<string, unknown>) {
+    const parseNumber = (value: unknown, fallback = 0) => {
+        if (value === '' || value == null) return fallback;
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : fallback;
+    };
+
+    const parseOptionalNumber = (value: unknown) => {
+        if (value === '' || value == null) return null;
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+    };
+
+    const parseOptionalDate = (value: unknown) => {
+        if (!value) return null;
+        const parsed = new Date(String(value));
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+    };
+
+    return {
+        name: String(input.name ?? '').trim(),
+        category: String(input.category ?? '').trim(),
+        unit: String(input.unit ?? '').trim(),
+        currentStock: parseNumber(input.currentStock),
+        minStock: parseNumber(input.minStock),
+        maxStock: parseOptionalNumber(input.maxStock),
+        cost: parseOptionalNumber(input.cost),
+        supplier: String(input.supplier ?? '').trim() || null,
+        location: String(input.location ?? '').trim() || null,
+        lastRestocked: parseOptionalDate(input.lastRestocked),
+        expiryDate: parseOptionalDate(input.expiryDate),
+    };
 }
 
 export async function GET(req: NextRequest) {
-    if (!auth(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!await getRequestUser(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const inventory = await prisma.inventory.findMany({
         orderBy: { name: 'asc' },
         include: {
@@ -106,13 +135,14 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-    const user = auth(req);
+    const user = await getRequestUser(req);
     if (!user || !['admin', 'manager'].includes(user.role)) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
-    const data = await req.json();
-    if (data.lastRestocked) data.lastRestocked = new Date(data.lastRestocked);
-    if (data.expiryDate) data.expiryDate = new Date(data.expiryDate);
+    const data = normalizeInventoryPayload(await req.json());
+    if (!data.name || !data.category || !data.unit) {
+        return NextResponse.json({ error: 'Name, category, and unit are required' }, { status: 400 });
+    }
     const item = await prisma.inventory.create({ data });
     return NextResponse.json(item, { status: 201 });
 }

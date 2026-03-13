@@ -45,8 +45,21 @@ type ItemFormState = {
     price: number;
     cost: number;
     categoryId: string;
-    isPopular: boolean;
 };
+
+type IngredientDraft = {
+    id: string;
+    inventoryId: string;
+    quantityUsed: string;
+};
+
+function createIngredientDraft(): IngredientDraft {
+    return {
+        id: Math.random().toString(36).slice(2, 11),
+        inventoryId: '',
+        quantityUsed: '',
+    };
+}
 
 export default function MenuPage() {
     const { user } = useAuth();
@@ -64,12 +77,20 @@ export default function MenuPage() {
     const [showRecipeEditor, setShowRecipeEditor] = useState(false);
 
     // Form States
-    const [itemForm, setItemForm] = useState<ItemFormState>({ id: '', name: '', description: '', price: 0, cost: 0, categoryId: '', isPopular: false });
+    const [itemForm, setItemForm] = useState<ItemFormState>({ id: '', name: '', description: '', price: 0, cost: 0, categoryId: '' });
     const [categoryForm, setCategoryForm] = useState({ name: '', icon: '🍽️', sortOrder: 0 });
     const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
     const [recipeIngredients, setRecipeIngredients] = useState<RecipeIngredient[]>([]);
-    const [newIngredient, setNewIngredient] = useState({ inventoryId: '', quantityUsed: 1 });
+    const [ingredientDrafts, setIngredientDrafts] = useState<IngredientDraft[]>([createIngredientDraft()]);
     const canManageMenu = user?.role === 'admin' || user?.role === 'manager';
+
+    const buildItemPayload = () => ({
+        name: itemForm.name.trim(),
+        description: itemForm.description.trim(),
+        price: Number(itemForm.price),
+        cost: Number(itemForm.cost),
+        categoryId: itemForm.categoryId,
+    });
 
     const fetchData = useCallback(async () => {
         try {
@@ -78,11 +99,15 @@ export default function MenuPage() {
                 fetch('/api/categories').then(r => r.json()),
                 fetch('/api/inventory').then(r => r.json())
             ]);
-            setItems(m);
-            setCategories(c);
-            setInventory(i);
+            setItems(Array.isArray(m) ? m : []);
+            setCategories(Array.isArray(c) ? c : []);
+            setInventory(Array.isArray(i) ? i : Array.isArray(i?.items) ? i.items : []);
             setLoading(false);
         } catch {
+            setItems([]);
+            setCategories([]);
+            setInventory([]);
+            setLoading(false);
             toast('error', 'Failed to load menu data');
         }
     }, [toast]);
@@ -97,52 +122,75 @@ export default function MenuPage() {
     const loadRecipeIngredients = async (itemId: string) => {
         try {
             const res = await fetch(`/api/menu/${itemId}/ingredients`);
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data.error || 'Failed to load recipe');
+            }
             const data = await res.json();
             setRecipeIngredients(data);
-        } catch {
-            toast('error', 'Failed to load recipe');
+        } catch (error) {
+            toast('error', error instanceof Error ? error.message : 'Failed to load recipe');
         }
     };
 
     const saveItem = async (openRecipeAfterSave = false) => {
+        const payload = buildItemPayload();
         const method = itemForm.id ? 'PATCH' : 'POST';
         const url = itemForm.id ? `/api/menu/${itemForm.id}` : '/api/menu';
+
+        if (!payload.name) {
+            toast('error', 'Item name is required');
+            return null;
+        }
+
+        if (!payload.categoryId) {
+            toast('error', 'Select a category before saving');
+            return null;
+        }
+
+        if (!Number.isFinite(payload.price)) {
+            toast('error', 'Enter a valid price');
+            return null;
+        }
 
         try {
             const res = await fetch(url, {
                 method,
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(itemForm)
+                body: JSON.stringify(payload)
             });
-            if (res.ok) {
-                const savedItem = await res.json();
-                const nextItemForm = {
-                    id: savedItem.id,
-                    name: savedItem.name,
-                    description: savedItem.description || '',
-                    price: savedItem.price,
-                    cost: savedItem.cost || 0,
-                    categoryId: savedItem.categoryId,
-                    isPopular: savedItem.isPopular,
-                };
+            const data = await res.json().catch(() => null);
 
-                setItemForm(nextItemForm);
-                setSelectedItem(savedItem);
-                toast('success', `Item ${itemForm.id ? 'updated' : 'created'} successfully`);
-
-                if (openRecipeAfterSave) {
-                    await loadRecipeIngredients(savedItem.id);
-                    setShowRecipeEditor(true);
-                } else {
-                    setIsItemModalOpen(false);
-                    setShowRecipeEditor(false);
-                }
-
-                fetchData();
-                return savedItem;
+            if (!res.ok) {
+                throw new Error(data?.error || 'Failed to save item');
             }
-        } catch {
-            toast('error', 'Failed to save item');
+
+            const savedItem = data;
+            const nextItemForm = {
+                id: savedItem.id,
+                name: savedItem.name,
+                description: savedItem.description || '',
+                price: savedItem.price,
+                cost: savedItem.cost || 0,
+                categoryId: savedItem.categoryId,
+            };
+
+            setItemForm(nextItemForm);
+            setSelectedItem(savedItem);
+            toast('success', `Item ${itemForm.id ? 'updated' : 'created'} successfully`);
+
+            if (openRecipeAfterSave) {
+                await loadRecipeIngredients(savedItem.id);
+                setShowRecipeEditor(true);
+            } else {
+                setIsItemModalOpen(false);
+                setShowRecipeEditor(false);
+            }
+
+            fetchData();
+            return savedItem;
+        } catch (error) {
+            toast('error', error instanceof Error ? error.message : 'Failed to save item');
         }
 
         return null;
@@ -200,37 +248,122 @@ export default function MenuPage() {
             price: itemForm.price,
             cost: itemForm.cost,
             categoryId: itemForm.categoryId,
-            isPopular: itemForm.isPopular,
+            isPopular: false,
         });
         await loadRecipeIngredients(itemId);
+        resetIngredientDrafts();
         setShowRecipeEditor(true);
     };
 
-    const handleAddIngredient = async () => {
-        if (!newIngredient.inventoryId || !selectedItem) return;
+    const updateIngredientDraft = (draftId: string, updates: Partial<IngredientDraft>) => {
+        setIngredientDrafts((prev) => prev.map((draft) => draft.id === draftId ? { ...draft, ...updates } : draft));
+    };
+
+    const addIngredientDraftRow = () => {
+        setIngredientDrafts((prev) => [...prev, createIngredientDraft()]);
+    };
+
+    const removeIngredientDraftRow = (draftId: string) => {
+        setIngredientDrafts((prev) => {
+            const remaining = prev.filter((draft) => draft.id !== draftId);
+            return remaining.length > 0 ? remaining : [createIngredientDraft()];
+        });
+    };
+
+    const resetIngredientDrafts = () => {
+        setIngredientDrafts([createIngredientDraft()]);
+    };
+
+    const handleSaveIngredientDrafts = async () => {
+        if (!selectedItem) return;
+
+        const activeDrafts = ingredientDrafts.filter((draft) => draft.inventoryId.trim() || draft.quantityUsed.trim());
+
+        const sanitizedDrafts = activeDrafts
+            .map((draft) => ({
+                inventoryId: draft.inventoryId.trim(),
+                quantityUsed: Number(draft.quantityUsed),
+            }))
+            .filter((draft) => draft.inventoryId || Number.isFinite(draft.quantityUsed));
+
+        if (sanitizedDrafts.length === 0) {
+            toast('error', 'Add at least one ingredient');
+            return;
+        }
+
+        if (sanitizedDrafts.some((draft) => !draft.inventoryId)) {
+            toast('error', 'Select an inventory item for each ingredient row');
+            return;
+        }
+
+        if (sanitizedDrafts.some((draft) => !Number.isFinite(draft.quantityUsed) || draft.quantityUsed <= 0)) {
+            toast('error', 'Enter a valid ingredient quantity for each row');
+            return;
+        }
+
+        const uniqueInventoryIds = new Set(sanitizedDrafts.map((draft) => draft.inventoryId));
+        if (uniqueInventoryIds.size !== sanitizedDrafts.length) {
+            toast('error', 'Choose each inventory item only once per save');
+            return;
+        }
+
         try {
             const res = await fetch(`/api/menu/${selectedItem.id}/ingredients`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(newIngredient)
+                body: JSON.stringify({ ingredients: sanitizedDrafts })
             });
-            if (res.ok) {
-                const updated = await res.json();
-                setRecipeIngredients(prev => {
-                    const exists = prev.findIndex(i => i.inventoryId === updated.inventoryId);
-                    if (exists > -1) {
-                        const next = [...prev];
-                        next[exists] = updated;
-                        return next;
-                    }
-                    return [...prev, updated];
-                });
-                setNewIngredient({ inventoryId: '', quantityUsed: 1 });
-                toast('success', 'Ingredient added to recipe');
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data.error || 'Failed to save ingredients');
             }
-        } catch {
-            toast('error', 'Failed to add ingredient');
+
+            const savedIngredients = await res.json();
+            const updates = Array.isArray(savedIngredients) ? savedIngredients : [savedIngredients];
+            setRecipeIngredients(prev => {
+                const next = [...prev];
+
+                updates.forEach((updated) => {
+                    const exists = next.findIndex(i => i.inventoryId === updated.inventoryId);
+                    if (exists > -1) {
+                        next[exists] = updated;
+                    } else {
+                        next.push(updated);
+                    }
+                });
+
+                return next;
+            });
+            resetIngredientDrafts();
+            toast('success', `${updates.length} ingredient${updates.length === 1 ? '' : 's'} saved to recipe`);
+        } catch (error) {
+            toast('error', error instanceof Error ? error.message : 'Failed to save ingredients');
         }
+    };
+
+    const openNewItemModal = () => {
+        setItemForm({ id: '', name: '', description: '', price: 0, cost: 0, categoryId: categories[0]?.id || '' });
+        setSelectedItem(null);
+        setRecipeIngredients([]);
+        resetIngredientDrafts();
+        setShowRecipeEditor(false);
+        setIsItemModalOpen(true);
+    };
+
+    const openEditItemModal = (item: MenuItem) => {
+        setItemForm({
+            id: item.id,
+            name: item.name,
+            description: item.description || '',
+            price: item.price,
+            cost: item.cost || 0,
+            categoryId: item.categoryId,
+        });
+        setSelectedItem(item);
+        setRecipeIngredients([]);
+        resetIngredientDrafts();
+        setShowRecipeEditor(false);
+        setIsItemModalOpen(true);
     };
 
     const handleRemoveIngredient = async (id: string) => {
@@ -241,12 +374,15 @@ export default function MenuPage() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ recipeIngredientId: id })
             });
-            if (res.ok) {
-                setRecipeIngredients(prev => prev.filter(i => i.id !== id));
-                toast('success', 'Ingredient removed');
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data.error || 'Failed to remove ingredient');
             }
-        } catch {
-            toast('error', 'Failed to remove ingredient');
+
+            setRecipeIngredients(prev => prev.filter(i => i.id !== id));
+            toast('success', 'Ingredient removed');
+        } catch (error) {
+            toast('error', error instanceof Error ? error.message : 'Failed to remove ingredient');
         }
     };
 
@@ -275,12 +411,7 @@ export default function MenuPage() {
                             <Plus size={16} /> Add Category
                         </button>
                         <button className="btn btn-primary" onClick={() => {
-                            setItemForm({ id: '', name: '', description: '', price: 0, cost: 0, categoryId: categories[0]?.id || '', isPopular: false });
-                            setSelectedItem(null);
-                            setRecipeIngredients([]);
-                            setNewIngredient({ inventoryId: '', quantityUsed: 1 });
-                            setShowRecipeEditor(false);
-                            setIsItemModalOpen(true);
+                            openNewItemModal();
                         }}>
                             <Plus size={16} /> Add Item
                         </button>
@@ -321,7 +452,9 @@ export default function MenuPage() {
                                     </td>
                                     <td className="font-bold text-success">{formatCurrency(item.price, settings.currencySymbol)}</td>
                                     <td>
-                                        {item.isPopular ? <span className="badge available">⭐ Popular</span> : <span className="badge" style={{ background: 'rgba(255,255,255,0.05)' }}>Standard</span>}
+                                        {item.isPopular
+                                            ? <span className="badge available">Popular</span>
+                                            : <span className="badge" style={{ background: 'rgba(255,255,255,0.05)' }}>Standard</span>}
                                     </td>
                                     <td>
                                         {canManageMenu && (
@@ -329,22 +462,7 @@ export default function MenuPage() {
                                                 <button
                                                     className="btn btn-icon btn-secondary"
                                                     title="Edit"
-                                                    onClick={() => {
-                                                        setItemForm({
-                                                            id: item.id,
-                                                            name: item.name,
-                                                            description: item.description || '',
-                                                            price: item.price,
-                                                            cost: item.cost || 0,
-                                                            categoryId: item.categoryId,
-                                                            isPopular: item.isPopular,
-                                                        });
-                                                        setSelectedItem(item);
-                                                        setRecipeIngredients([]);
-                                                        setNewIngredient({ inventoryId: '', quantityUsed: 1 });
-                                                        setShowRecipeEditor(false);
-                                                        setIsItemModalOpen(true);
-                                                    }}
+                                                    onClick={() => openEditItemModal(item)}
                                                 >
                                                     <Edit2 size={14} />
                                                 </button>
@@ -364,7 +482,7 @@ export default function MenuPage() {
             {/* Item Modal */}
             {isItemModalOpen && (
                 <div className="modal-overlay">
-                    <div className="modal-content" style={{ maxWidth: 680 }}>
+                    <div className="modal-content item-modal-content" style={{ maxWidth: 680 }}>
                         <div className="flex justify-between items-center mb-6">
                             <div>
                                 <h2 className="text-xl font-bold">{itemForm.id ? 'Edit Menu Item' : 'New Menu Item'}</h2>
@@ -383,7 +501,7 @@ export default function MenuPage() {
                                 <label className="block text-sm text-muted mb-1">Description</label>
                                 <textarea className="form-input" rows={3} value={itemForm.description} onChange={e => setItemForm({ ...itemForm, description: e.target.value })} placeholder="Describe the dish..." />
                             </div>
-                            <div className="grid grid-cols-2 gap-4">
+                            <div className="grid grid-cols-2 gap-4 item-form-grid">
                                 <div>
                                     <label className="block text-sm text-muted mb-1">Price ($)</label>
                                     <input required type="number" step="0.01" className="form-input" value={itemForm.price} onChange={e => setItemForm({ ...itemForm, price: parseFloat(e.target.value) })} />
@@ -394,10 +512,6 @@ export default function MenuPage() {
                                         {categories.map(c => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
                                     </select>
                                 </div>
-                            </div>
-                            <div className="flex items-center gap-2 mt-2">
-                                <input type="checkbox" id="isPopular" checked={itemForm.isPopular} onChange={e => setItemForm({ ...itemForm, isPopular: e.target.checked })} />
-                                <label htmlFor="isPopular" className="text-sm">Mark as Popular (Show ⭐ badge)</label>
                             </div>
                             <div className="rounded-lg border border-white/10 bg-white/5 p-4">
                                 <div className="flex items-center justify-between gap-3">
@@ -430,30 +544,49 @@ export default function MenuPage() {
                                     </div>
 
                                     <div className="bg-white/5 rounded-lg p-4 mb-6 border border-white/10">
-                                        <h3 className="text-sm font-bold mb-3 flex items-center gap-2"><Plus size={14} /> Add Ingredient</h3>
-                                        <div className="flex gap-2">
-                                            <select
-                                                className="form-input flex-1"
-                                                value={newIngredient.inventoryId}
-                                                onChange={e => setNewIngredient({ ...newIngredient, inventoryId: e.target.value })}
-                                            >
-                                                <option value="">Select inventory item...</option>
-                                                {inventory.map(i => (
-                                                    <option key={i.id} value={i.id}>{i.name} ({i.unit})</option>
-                                                ))}
-                                            </select>
-                                            <div style={{ width: 100 }}>
-                                                <input
-                                                    type="number"
-                                                    step="0.001"
-                                                    className="form-input"
-                                                    placeholder="Qty"
-                                                    value={newIngredient.quantityUsed}
-                                                    onChange={e => setNewIngredient({ ...newIngredient, quantityUsed: parseFloat(e.target.value) })}
-                                                />
-                                            </div>
-                                            <button type="button" className="btn btn-primary btn-icon" onClick={handleAddIngredient} title="Add to recipe">
-                                                <Plus size={20} />
+                                        <div className="flex items-center justify-between gap-3 mb-3">
+                                            <h3 className="text-sm font-bold flex items-center gap-2"><Plus size={14} /> Add Ingredients</h3>
+                                            <button type="button" className="btn btn-secondary" onClick={addIngredientDraftRow}>
+                                                <Plus size={16} /> Add Row
+                                            </button>
+                                        </div>
+                                        <div className="flex flex-col gap-3">
+                                            {ingredientDrafts.map((draft, index) => (
+                                                <div key={draft.id} className="recipe-add-row">
+                                                    <select
+                                                        className="form-input flex-1"
+                                                        value={draft.inventoryId}
+                                                        onChange={e => updateIngredientDraft(draft.id, { inventoryId: e.target.value })}
+                                                    >
+                                                        <option value="">Select inventory item...</option>
+                                                        {inventory.map(i => (
+                                                            <option key={i.id} value={i.id}>{i.name} ({i.unit})</option>
+                                                        ))}
+                                                    </select>
+                                                    <div className="recipe-quantity-field">
+                                                        <input
+                                                            type="number"
+                                                            step="0.001"
+                                                            className="form-input"
+                                                            placeholder="Qty"
+                                                            value={draft.quantityUsed}
+                                                            onChange={e => updateIngredientDraft(draft.id, { quantityUsed: e.target.value })}
+                                                        />
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        className="btn btn-icon btn-ghost"
+                                                        onClick={() => removeIngredientDraftRow(draft.id)}
+                                                        title={ingredientDrafts.length === 1 ? 'Clear row' : `Remove ingredient row ${index + 1}`}
+                                                    >
+                                                        <Trash2 size={16} />
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        <div className="flex justify-end mt-4">
+                                            <button type="button" className="btn btn-primary" onClick={handleSaveIngredientDrafts}>
+                                                <Save size={16} /> Save Ingredients
                                             </button>
                                         </div>
                                     </div>
@@ -531,6 +664,8 @@ export default function MenuPage() {
                     align-items: center;
                     justify-content: center;
                     z-index: 1000;
+                    padding: clamp(0.75rem, 3vh, 2rem);
+                    overflow-y: auto;
                 }
                 .modal-content {
                     background: #1a1a1a;
@@ -538,7 +673,13 @@ export default function MenuPage() {
                     border-radius: 1rem;
                     border: 1px solid rgba(255,255,255,0.1);
                     width: 90%;
+                    max-height: calc(100dvh - clamp(1.5rem, 6vh, 4rem));
+                    overflow-y: auto;
+                    overscroll-behavior: contain;
                     box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);
+                }
+                .item-modal-content {
+                    scrollbar-gutter: stable;
                 }
                 .form-input {
                     width: 100%;
@@ -556,6 +697,28 @@ export default function MenuPage() {
                 }
                 select.form-input option {
                     background: #1a1a1a;
+                }
+                .recipe-add-row {
+                    display: grid;
+                    grid-template-columns: minmax(0, 1fr) 100px auto;
+                    gap: 0.5rem;
+                    align-items: stretch;
+                }
+                .recipe-quantity-field {
+                    width: 100%;
+                }
+                @media (max-width: 720px) {
+                    .modal-content {
+                        width: 100%;
+                        padding: 1.25rem;
+                        border-radius: 0.875rem;
+                    }
+                    .item-form-grid {
+                        grid-template-columns: minmax(0, 1fr);
+                    }
+                    .recipe-add-row {
+                        grid-template-columns: minmax(0, 1fr);
+                    }
                 }
             `}</style>
         </AppLayout>

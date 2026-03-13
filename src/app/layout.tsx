@@ -1,8 +1,19 @@
 import type { Metadata } from "next";
+import { Fraunces, Manrope } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { SettingsProvider } from "@/contexts/SettingsContext";
 import { ToastProvider } from "@/contexts/ToastContext";
+
+const fraunces = Fraunces({
+  subsets: ["latin"],
+  variable: "--font-display",
+});
+
+const manrope = Manrope({
+  subsets: ["latin"],
+  variable: "--font-body",
+});
 
 export const metadata: Metadata = {
   title: "RMS — Restaurant Management System",
@@ -15,8 +26,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body>
+    <html lang="en" className={`${fraunces.variable} ${manrope.variable}`}>
+      <body suppressHydrationWarning className="app-body">
         <AuthProvider>
           <SettingsProvider>
             <ToastProvider>

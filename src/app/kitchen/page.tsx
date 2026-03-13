@@ -1,13 +1,21 @@
 'use client';
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import AppLayout from '@/components/AppLayout';
-import { ChefHat, Check, Clock, AlertTriangle, Link } from 'lucide-react';
+import { ChefHat, Check, Clock, AlertTriangle, Link, ArrowRight } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 
-export default function KitchenPage() {
+function KitchenPageContent() {
+    const searchParams = useSearchParams();
     const [orders, setOrders] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
+    const [clockNow, setClockNow] = useState(() => Date.now());
     const toast = useToast();
+    const incomingRef = useRef<HTMLDivElement | null>(null);
+    const preparingRef = useRef<HTMLDivElement | null>(null);
+    const readyRef = useRef<HTMLDivElement | null>(null);
+    const servedRef = useRef<HTMLDivElement | null>(null);
+    const focus = searchParams.get('focus');
 
     const fetchOrders = () => {
         fetch('/api/orders?status=pending,preparing,ready,served')
@@ -22,6 +30,28 @@ export default function KitchenPage() {
         return () => clearInterval(int);
     }, []);
 
+    useEffect(() => {
+        const timer = setInterval(() => setClockNow(Date.now()), 60000);
+        return () => clearInterval(timer);
+    }, []);
+
+    useEffect(() => {
+        if (loading || !focus) return;
+
+        const columnMap: Record<string, React.RefObject<HTMLDivElement | null>> = {
+            pending: incomingRef,
+            preparing: preparingRef,
+            ready: readyRef,
+            served: servedRef,
+        };
+
+        columnMap[focus]?.current?.scrollIntoView({
+            behavior: 'smooth',
+            block: 'nearest',
+            inline: 'center',
+        });
+    }, [focus, loading]);
+
     const updateStatus = async (id: string, status: string) => {
         const res = await fetch(`/api/orders/${id}`, {
             method: 'PATCH',
@@ -35,8 +65,49 @@ export default function KitchenPage() {
     };
 
     const getElapsedTime = (createdAt: string) => {
-        const diff = Math.floor((Date.now() - new Date(createdAt).getTime()) / 60000);
+        const diff = Math.floor((clockNow - new Date(createdAt).getTime()) / 60000);
         return diff;
+    };
+
+    const focusConfig = focus === 'ready'
+        ? {
+            title: 'Orders ready for pickup',
+            detail: 'You were sent directly to the orders waiting on the floor team.',
+            accent: '#22c55e',
+            background: 'rgba(34,197,94,0.12)',
+            column: 'ready',
+        }
+        : focus === 'pending'
+            ? {
+                title: 'Incoming orders waiting to start',
+                detail: 'These tickets need kitchen attention before the queue builds up.',
+                accent: '#38bdf8',
+                background: 'rgba(56,189,248,0.12)',
+                column: 'pending',
+            }
+            : focus === 'preparing'
+                ? {
+                    title: 'Orders in preparation',
+                    detail: 'You are focused on the active prep queue.',
+                    accent: '#f59e0b',
+                    background: 'rgba(245,158,11,0.12)',
+                    column: 'preparing',
+                }
+                : null;
+
+    const pendingOrders = orders.filter(o => o.status === 'pending');
+    const preparingOrders = orders.filter(o => o.status === 'preparing');
+    const readyOrders = orders.filter(o => o.status === 'ready');
+    const servedOrders = orders.filter(o => o.status === 'served');
+
+    const getColumnState = (column: 'pending' | 'preparing' | 'ready' | 'served') => {
+        const isFocused = !focusConfig || focusConfig.column === column;
+
+        return {
+            opacity: isFocused ? 1 : 0.45,
+            borderColor: focusConfig?.column === column ? focusConfig.accent : 'var(--border)',
+            boxShadow: focusConfig?.column === column ? `0 0 0 1px ${focusConfig.accent}, 0 14px 28px ${focusConfig.background}` : 'none',
+        };
     };
 
     const renderOrderCard = (order: any) => {
@@ -118,55 +189,79 @@ export default function KitchenPage() {
                 </div>
             </div>
 
+            {focusConfig && (
+                <div style={{ marginBottom: 18, padding: 16, borderRadius: 18, border: `1px solid ${focusConfig.accent}`, background: `linear-gradient(135deg, ${focusConfig.background}, rgba(15,23,42,0.9))`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                    <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, fontWeight: 800, letterSpacing: 1.3, textTransform: 'uppercase', color: focusConfig.accent, marginBottom: 8 }}>
+                            <AlertTriangle size={14} />
+                            Focused Kitchen View
+                        </div>
+                        <div style={{ fontSize: 18, fontWeight: 800, color: '#fff', marginBottom: 4 }}>{focusConfig.title}</div>
+                        <div style={{ fontSize: 13, color: '#cbd5e1' }}>{focusConfig.detail}</div>
+                    </div>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: focusConfig.accent, fontWeight: 700, fontSize: 13 }}>
+                        Scroll snapped to the active column <ArrowRight size={14} />
+                    </div>
+                </div>
+            )}
+
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(300px, 1fr))', gap: '24px', alignItems: 'start', overflowX: 'auto', paddingBottom: 24, minHeight: '70vh' }}>
                 {/* PENDING COLUMN */}
-                <div style={{ background: 'var(--bg-card)', padding: '16px', borderRadius: 'var(--radius-lg)', display: 'flex', flexDirection: 'column', gap: '16px', minHeight: '100%', border: '1px solid var(--border)' }}>
+                <div ref={incomingRef} style={{ background: 'var(--bg-card)', padding: '16px', borderRadius: 'var(--radius-lg)', display: 'flex', flexDirection: 'column', gap: '16px', minHeight: '100%', border: `1px solid ${getColumnState('pending').borderColor}`, boxShadow: getColumnState('pending').boxShadow, opacity: getColumnState('pending').opacity, transition: 'opacity 0.2s, box-shadow 0.2s, border-color 0.2s' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '2px solid var(--border)', paddingBottom: '12px' }}>
                         <h3 style={{ fontSize: 16, fontWeight: 'bold' }}>Incoming</h3>
-                        <span className="badge pending">{orders.filter(o => o.status === 'pending').length}</span>
+                        <span className="badge pending">{pendingOrders.length}</span>
                     </div>
-                    {orders.filter(o => o.status === 'pending').map(order => renderOrderCard(order))}
-                    {orders.filter(o => o.status === 'pending').length === 0 && (
+                    {pendingOrders.map(order => renderOrderCard(order))}
+                    {pendingOrders.length === 0 && (
                         <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13, background: 'var(--surface-active)', borderRadius: 'var(--radius-md)' }}>No active incoming orders.</div>
                     )}
                 </div>
 
                 {/* PREPARING COLUMN */}
-                <div style={{ background: 'var(--bg-card)', padding: '16px', borderRadius: 'var(--radius-lg)', display: 'flex', flexDirection: 'column', gap: '16px', minHeight: '100%', border: '1px solid var(--border)' }}>
+                <div ref={preparingRef} style={{ background: 'var(--bg-card)', padding: '16px', borderRadius: 'var(--radius-lg)', display: 'flex', flexDirection: 'column', gap: '16px', minHeight: '100%', border: `1px solid ${getColumnState('preparing').borderColor}`, boxShadow: getColumnState('preparing').boxShadow, opacity: getColumnState('preparing').opacity, transition: 'opacity 0.2s, box-shadow 0.2s, border-color 0.2s' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '2px solid var(--border)', paddingBottom: '12px' }}>
                         <h3 style={{ fontSize: 16, fontWeight: 'bold' }}>Preparing</h3>
-                        <span className="badge preparing">{orders.filter(o => o.status === 'preparing').length}</span>
+                        <span className="badge preparing">{preparingOrders.length}</span>
                     </div>
-                    {orders.filter(o => o.status === 'preparing').map(order => renderOrderCard(order))}
-                    {orders.filter(o => o.status === 'preparing').length === 0 && (
+                    {preparingOrders.map(order => renderOrderCard(order))}
+                    {preparingOrders.length === 0 && (
                         <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13, background: 'var(--surface-active)', borderRadius: 'var(--radius-md)' }}>No orders currently being prepared.</div>
                     )}
                 </div>
 
                 {/* READY COLUMN */}
-                <div style={{ background: 'var(--bg-card)', padding: '16px', borderRadius: 'var(--radius-lg)', display: 'flex', flexDirection: 'column', gap: '16px', minHeight: '100%', border: '1px solid var(--border)' }}>
+                <div ref={readyRef} style={{ background: 'var(--bg-card)', padding: '16px', borderRadius: 'var(--radius-lg)', display: 'flex', flexDirection: 'column', gap: '16px', minHeight: '100%', border: `1px solid ${getColumnState('ready').borderColor}`, boxShadow: getColumnState('ready').boxShadow, opacity: getColumnState('ready').opacity, transition: 'opacity 0.2s, box-shadow 0.2s, border-color 0.2s' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '2px solid var(--border)', paddingBottom: '12px' }}>
                         <h3 style={{ fontSize: 16, fontWeight: 'bold' }}>Ready For Pickup</h3>
-                        <span className="badge ready">{orders.filter(o => o.status === 'ready').length}</span>
+                        <span className="badge ready">{readyOrders.length}</span>
                     </div>
-                    {orders.filter(o => o.status === 'ready').map(order => renderOrderCard(order))}
-                    {orders.filter(o => o.status === 'ready').length === 0 && (
+                    {readyOrders.map(order => renderOrderCard(order))}
+                    {readyOrders.length === 0 && (
                         <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13, background: 'var(--surface-active)', borderRadius: 'var(--radius-md)' }}>No orders waiting for pickup.</div>
                     )}
                 </div>
 
                 {/* DELIVERED COLUMN */}
-                <div style={{ background: 'var(--bg-card)', padding: '16px', borderRadius: 'var(--radius-lg)', display: 'flex', flexDirection: 'column', gap: '16px', minHeight: '100%', border: '1px solid var(--border)', opacity: 0.8 }}>
+                <div ref={servedRef} style={{ background: 'var(--bg-card)', padding: '16px', borderRadius: 'var(--radius-lg)', display: 'flex', flexDirection: 'column', gap: '16px', minHeight: '100%', border: `1px solid ${getColumnState('served').borderColor}`, boxShadow: getColumnState('served').boxShadow, opacity: focusConfig ? getColumnState('served').opacity : 0.8, transition: 'opacity 0.2s, box-shadow 0.2s, border-color 0.2s' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '2px solid var(--border)', paddingBottom: '12px' }}>
                         <h3 style={{ fontSize: 16, fontWeight: 'bold' }}>Delivered</h3>
-                        <span className="badge" style={{ background: 'var(--success)', color: 'white' }}>{orders.filter(o => o.status === 'served').length}</span>
+                        <span className="badge" style={{ background: 'var(--success)', color: 'white' }}>{servedOrders.length}</span>
                     </div>
-                    {orders.filter(o => o.status === 'served').map(order => renderOrderCard(order))}
-                    {orders.filter(o => o.status === 'served').length === 0 && (
+                    {servedOrders.map(order => renderOrderCard(order))}
+                    {servedOrders.length === 0 && (
                         <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13, background: 'var(--surface-active)', borderRadius: 'var(--radius-md)' }}>No delivered orders yet.</div>
                     )}
                 </div>
             </div>
         </AppLayout>
+    );
+}
+
+export default function KitchenPage() {
+    return (
+        <Suspense fallback={<AppLayout><div className="loading-spinner" style={{ margin: '100px auto' }} /></AppLayout>}>
+            <KitchenPageContent />
+        </Suspense>
     );
 }

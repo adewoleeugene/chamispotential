@@ -1,7 +1,7 @@
 'use client';
 import React, { useEffect, useState } from 'react';
 import AppLayout from '@/components/AppLayout';
-import { Plus, CheckCircle, XCircle, Search } from 'lucide-react';
+import { Plus, CheckCircle, XCircle } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 
 export default function ReservationsPage() {

@@ -1,15 +1,10 @@
 import { randomUUID } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyToken } from '@/lib/auth';
+import { getRequestUser } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { createOrderWithItems } from '@/lib/orders';
 import { createMonimeCheckoutSession, getMonimeConfig } from '@/lib/monime';
 import { toMinorUnits } from '@/lib/monime-payments';
-
-function auth(req: NextRequest) {
-  const token = req.cookies.get('rms-token')?.value;
-  return token ? verifyToken(token) : null;
-}
 
 function getPublicAppUrl(req: NextRequest) {
   const configuredUrl = process.env.NEXTAUTH_URL;
@@ -21,8 +16,9 @@ function getPublicAppUrl(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const user = auth(req);
+  const user = await getRequestUser(req);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (user.role !== 'waiter') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   const body = await req.json();
   const { tableId, items, type, notes, customerName, customerPhone, discount } = body;
@@ -146,7 +142,11 @@ export async function POST(req: NextRequest) {
         }),
         prisma.order.updateMany({
           where: { paymentAttempts: { some: { id: createdAttemptId } } },
-          data: { paymentMethod: 'monime', paymentStatus: 'failed' },
+          data: {
+            paymentMethod: 'monime',
+            paymentStatus: 'failed',
+            status: 'cancelled',
+          },
         }),
       ]);
     }

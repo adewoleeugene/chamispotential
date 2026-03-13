@@ -15,6 +15,11 @@ model User {
   role      String   @default("staff") // admin, manager, staff, cashier, kitchen
   avatar    String?
   isActive  Boolean  @default(true)
+  failedLoginAttempts Int      @default(0)
+  lastFailedLoginAt   DateTime?
+  lockedUntil         DateTime?
+  mustChangePassword  Boolean  @default(false)
+  sessionVersion      Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

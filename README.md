@@ -30,6 +30,11 @@ Server-owned Monime checkout is wired through these routes:
 Authoritative payment completion comes from the Monime webhook. The success redirect is only used to show a pending or confirmed UX while reconciliation finishes.
 
 Required env vars are documented in [`.env.example`](/Users/christexfoundation/Documents/Engineering%20/RMS/rms-app/.env.example).
+Set `JWT_SECRET` to a long random value before running the app in any environment.
+
+For Monime webhooks, make sure the verification method configured in Monime matches your app env:
+- `HS256`: set `MONIME_WEBHOOK_SECRET`
+- `ES256`: set `MONIME_WEBHOOK_VERIFICATION_METHOD=ES256` and `MONIME_WEBHOOK_PUBLIC_KEY`
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 

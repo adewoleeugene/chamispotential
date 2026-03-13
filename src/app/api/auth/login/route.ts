@@ -1,31 +1,88 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { verifyPassword, createToken } from '@/lib/auth';
+import {
+    calculateLockoutExpiry,
+    createToken,
+    getLockoutMessage,
+    MAX_LOGIN_ATTEMPTS,
+    verifyPassword,
+} from '@/lib/auth';
 
 export async function POST(req: NextRequest) {
     try {
         const { email, password } = await req.json();
+        const normalizedEmail = email?.toLowerCase().trim();
 
-        if (!email || !password) {
+        if (!normalizedEmail || !password) {
             return NextResponse.json({ error: 'Email and password required' }, { status: 400 });
         }
 
-        const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
+        const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
 
         if (!user || !user.isActive) {
             return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
         }
 
-        const valid = await verifyPassword(password, user.password);
-        if (!valid) {
-            return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
+        const now = new Date();
+        if (user.lockedUntil && user.lockedUntil > now) {
+            return NextResponse.json(
+                { error: getLockoutMessage(user.lockedUntil, now) },
+                { status: 429 },
+            );
         }
 
-        const token = createToken({ id: user.id, email: user.email, role: user.role, name: user.name });
+        const previousAttempts = user.lockedUntil && user.lockedUntil <= now
+            ? 0
+            : user.failedLoginAttempts;
+
+        const valid = await verifyPassword(password, user.password);
+        if (!valid) {
+            const nextFailedAttempts = previousAttempts + 1;
+            const shouldLock = nextFailedAttempts >= MAX_LOGIN_ATTEMPTS;
+
+            await prisma.user.update({
+                where: { id: user.id },
+                data: {
+                    failedLoginAttempts: nextFailedAttempts,
+                    lastFailedLoginAt: now,
+                    lockedUntil: shouldLock ? calculateLockoutExpiry(now) : null,
+                },
+            });
+
+            return NextResponse.json(
+                { error: shouldLock ? getLockoutMessage(calculateLockoutExpiry(now), now) : 'Invalid credentials' },
+                { status: shouldLock ? 429 : 401 },
+            );
+        }
+
+        if (previousAttempts || user.lastFailedLoginAt || user.lockedUntil) {
+            await prisma.user.update({
+                where: { id: user.id },
+                data: {
+                    failedLoginAttempts: 0,
+                    lastFailedLoginAt: null,
+                    lockedUntil: null,
+                },
+            });
+        }
+
+        const token = createToken({
+            id: user.id,
+            email: user.email,
+            role: user.role,
+            name: user.name,
+            sessionVersion: user.sessionVersion,
+        });
 
         const response = NextResponse.json({
             success: true,
-            user: { id: user.id, name: user.name, email: user.email, role: user.role },
+            user: {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                role: user.role,
+                mustChangePassword: user.mustChangePassword,
+            },
         });
 
         response.cookies.set('rms-token', token, {
@@ -33,6 +90,7 @@ export async function POST(req: NextRequest) {
             secure: process.env.NODE_ENV === 'production',
             maxAge: 60 * 60 * 24 * 7,
             path: '/',
+            sameSite: 'lax',
         });
 
         return response;

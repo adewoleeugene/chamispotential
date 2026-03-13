@@ -1,23 +1,82 @@
 'use client';
 import React, { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSettings } from '@/contexts/SettingsContext';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
-import { TrendingUp, Users, ShoppingBag, DollarSign, Clock, CheckCircle, Link } from 'lucide-react';
+import { TrendingUp, Users, ShoppingBag, DollarSign, Clock, CheckCircle, Link, AlertTriangle, ArrowRight, BellRing, PackageSearch } from 'lucide-react';
 import { formatCurrency } from '@/lib/currency';
 
 export default function Dashboard() {
     const { user } = useAuth();
     const { settings } = useSettings();
+    const router = useRouter();
     const [data, setData] = useState<any>(null);
+    const [inventorySummary, setInventorySummary] = useState({ reorderNow: 0, reorderSoon: 0 });
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        fetch('/api/dashboard')
-            .then(res => res.json())
-            .then(d => { setData(d); setLoading(false); });
+        Promise.all([
+            fetch('/api/dashboard').then(res => res.json()),
+            fetch('/api/inventory').then(res => res.json()),
+        ])
+            .then(([dashboardData, inventoryData]) => {
+                setData(dashboardData);
+                setInventorySummary(inventoryData?.adviceSummary || { reorderNow: 0, reorderSoon: 0 });
+                setLoading(false);
+            })
+            .catch(() => {
+                setData(null);
+                setInventorySummary({ reorderNow: 0, reorderSoon: 0 });
+                setLoading(false);
+            });
     }, []);
+
+    const isOpsViewer = user?.role === 'admin' || user?.role === 'manager';
+    const attentionCards = [
+        {
+            id: 'reorder-now',
+            title: 'Reorder Now',
+            count: inventorySummary.reorderNow,
+            detail: inventorySummary.reorderNow > 0 ? 'Critical stock is already at risk.' : 'No critical stock issues right now.',
+            href: '/inventory?focus=reorder_now',
+            icon: AlertTriangle,
+            accent: inventorySummary.reorderNow > 0 ? '#f97316' : '#334155',
+            glow: inventorySummary.reorderNow > 0 ? 'rgba(249,115,22,0.28)' : 'rgba(51,65,85,0.2)',
+        },
+        {
+            id: 'reorder-soon',
+            title: 'Going Low',
+            count: inventorySummary.reorderSoon,
+            detail: inventorySummary.reorderSoon > 0 ? 'Stock will need attention within days.' : 'Upcoming inventory demand looks stable.',
+            href: '/inventory?focus=reorder_soon',
+            icon: PackageSearch,
+            accent: inventorySummary.reorderSoon > 0 ? '#f59e0b' : '#334155',
+            glow: inventorySummary.reorderSoon > 0 ? 'rgba(245,158,11,0.24)' : 'rgba(51,65,85,0.2)',
+        },
+        {
+            id: 'ready-orders',
+            title: 'Ready For Pickup',
+            count: data?.orders?.ready || 0,
+            detail: (data?.orders?.ready || 0) > 0 ? 'Orders are waiting on the floor right now.' : 'No ready orders are waiting.',
+            href: '/kitchen?focus=ready',
+            icon: BellRing,
+            accent: (data?.orders?.ready || 0) > 0 ? '#22c55e' : '#334155',
+            glow: (data?.orders?.ready || 0) > 0 ? 'rgba(34,197,94,0.24)' : 'rgba(51,65,85,0.2)',
+        },
+        {
+            id: 'pending-orders',
+            title: 'Kitchen Queue',
+            count: data?.orders?.pending || 0,
+            detail: (data?.orders?.pending || 0) > 0 ? 'Incoming orders are waiting to be started.' : 'Kitchen queue is under control.',
+            href: '/kitchen?focus=pending',
+            icon: ShoppingBag,
+            accent: (data?.orders?.pending || 0) > 0 ? '#38bdf8' : '#334155',
+            glow: (data?.orders?.pending || 0) > 0 ? 'rgba(56,189,248,0.24)' : 'rgba(51,65,85,0.2)',
+        },
+    ];
+    const activeAttentionCount = attentionCards.filter((card) => card.count > 0).length;
 
     if (loading) return (
         <AppLayout>
@@ -94,11 +153,90 @@ export default function Dashboard() {
 
     return (
         <AppLayout>
+            {isOpsViewer && (
+                <div
+                    style={{
+                        marginBottom: 20,
+                        padding: 18,
+                        borderRadius: 20,
+                        border: '1px solid rgba(148,163,184,0.18)',
+                        background: 'linear-gradient(135deg, rgba(15,23,42,0.92), rgba(12,18,31,0.96))',
+                        boxShadow: activeAttentionCount > 0 ? '0 18px 48px rgba(15,23,42,0.36)' : '0 10px 28px rgba(15,23,42,0.2)',
+                        overflow: 'hidden',
+                        position: 'relative',
+                    }}
+                >
+                    <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at top right, rgba(59,130,246,0.18), transparent 36%), radial-gradient(circle at bottom left, rgba(249,115,22,0.1), transparent 30%)', pointerEvents: 'none' }} />
+                    <div style={{ position: 'relative', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, marginBottom: 16, flexWrap: 'wrap' }}>
+                        <div>
+                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1.4, color: activeAttentionCount > 0 ? '#f8fafc' : '#cbd5e1', marginBottom: 10 }}>
+                                <AlertTriangle size={14} style={{ color: activeAttentionCount > 0 ? '#f97316' : '#94a3b8' }} />
+                                Operations Pulse
+                            </div>
+                            <h3 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: '#f8fafc' }}>
+                                {activeAttentionCount > 0 ? `${activeAttentionCount} areas need attention now` : 'No urgent operational issues right now'}
+                            </h3>
+                            <p style={{ margin: '8px 0 0', color: '#94a3b8', fontSize: 13, maxWidth: 680 }}>
+                                Click any signal below to jump straight to the page where the team can act on it.
+                            </p>
+                        </div>
+                        <div style={{ alignSelf: 'center', padding: '8px 12px', borderRadius: 999, background: activeAttentionCount > 0 ? 'rgba(249,115,22,0.14)' : 'rgba(51,65,85,0.35)', color: activeAttentionCount > 0 ? '#fdba74' : '#cbd5e1', fontSize: 12, fontWeight: 700 }}>
+                            {activeAttentionCount > 0 ? 'Actionable alerts live' : 'Everything is stable'}
+                        </div>
+                    </div>
+
+                    <div style={{ position: 'relative', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12 }}>
+                        {attentionCards.map((card) => {
+                            const Icon = card.icon;
+                            const isActive = card.count > 0;
+
+                            return (
+                                <button
+                                    key={card.id}
+                                    onClick={() => router.push(card.href)}
+                                    style={{
+                                        textAlign: 'left',
+                                        padding: 16,
+                                        borderRadius: 18,
+                                        border: `1px solid ${isActive ? card.accent : 'rgba(148,163,184,0.16)'}`,
+                                        background: isActive ? `linear-gradient(180deg, ${card.glow}, rgba(15,23,42,0.88))` : 'rgba(15,23,42,0.62)',
+                                        boxShadow: isActive ? `0 14px 28px ${card.glow}` : 'none',
+                                        color: '#fff',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        gap: 14,
+                                    }}
+                                >
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                                        <div style={{ width: 42, height: 42, borderRadius: 14, background: 'rgba(15,23,42,0.58)', border: `1px solid ${isActive ? card.accent : 'rgba(148,163,184,0.16)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                            <Icon size={18} style={{ color: isActive ? card.accent : '#cbd5e1' }} />
+                                        </div>
+                                        <ArrowRight size={16} style={{ color: isActive ? card.accent : '#64748b', flexShrink: 0 }} />
+                                    </div>
+                                    <div>
+                                        <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: isActive ? '#e2e8f0' : '#94a3b8', marginBottom: 8 }}>
+                                            {card.title}
+                                        </div>
+                                        <div style={{ fontSize: 30, fontWeight: 800, lineHeight: 1, color: isActive ? '#fff' : '#cbd5e1', marginBottom: 10 }}>
+                                            {card.count}
+                                        </div>
+                                        <div style={{ fontSize: 12.5, color: isActive ? '#e2e8f0' : '#94a3b8', lineHeight: 1.5 }}>
+                                            {card.detail}
+                                        </div>
+                                    </div>
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
+
             <div className="stat-grid">
                 <div className="stat-card orange">
                     <div className="stat-icon-wrap orange"><DollarSign size={24} /></div>
                     <div className="stat-value">{formatCurrency(data?.revenue?.today || 0, settings.currencySymbol)}</div>
-                    <div className="stat-label">Today's Revenue</div>
+                    <div className="stat-label">Today&apos;s Revenue</div>
                     <div className="stat-trend up"><TrendingUp size={14} /> +12% from yesterday</div>
                 </div>
                 <div className="stat-card blue">

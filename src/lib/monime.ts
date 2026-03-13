@@ -58,6 +58,9 @@ function getRequiredEnv(name: string) {
 }
 
 export function getMonimeConfig() {
+  const webhookVerificationMethod = (process.env.MONIME_WEBHOOK_VERIFICATION_METHOD || 'HS256').toUpperCase();
+  const webhookToleranceSeconds = Number(process.env.MONIME_WEBHOOK_TOLERANCE_SECONDS || '300');
+
   return {
     apiBaseUrl: process.env.MONIME_API_BASE_URL || 'https://api.monime.io',
     bearerToken: getRequiredEnv('MONIME_BEARER_TOKEN'),
@@ -66,6 +69,9 @@ export function getMonimeConfig() {
     financialAccountId: process.env.MONIME_FINANCIAL_ACCOUNT_ID,
     currency: process.env.MONIME_CURRENCY || 'SLE',
     webhookSecret: process.env.MONIME_WEBHOOK_SECRET,
+    webhookPublicKey: process.env.MONIME_WEBHOOK_PUBLIC_KEY?.replace(/\\n/g, '\n'),
+    webhookVerificationMethod,
+    webhookToleranceSeconds: Number.isFinite(webhookToleranceSeconds) ? webhookToleranceSeconds : 300,
   };
 }
 

@@ -1,18 +1,29 @@
 'use client';
-import React, { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import Sidebar from '@/components/Sidebar';
-import { Bell, Check } from 'lucide-react';
-import { useState } from 'react';
+import { Bell, Check, Menu } from 'lucide-react';
+
+type ReadyOrder = {
+    id: string;
+    orderNumber: string | number;
+    type: string;
+    items?: Array<unknown>;
+    table?: {
+        number?: string | number;
+    } | null;
+};
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
     const { user, loading } = useAuth();
     const router = useRouter();
     const pathname = usePathname();
 
-    const [readyOrders, setReadyOrders] = useState<any[]>([]);
+    const [readyOrders, setReadyOrders] = useState<ReadyOrder[]>([]);
     const [showNotifs, setShowNotifs] = useState(false);
+    const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [headerDate, setHeaderDate] = useState('');
 
     useEffect(() => {
         if (!loading && !user && pathname !== '/login' && pathname !== '/') {
@@ -21,17 +32,44 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     }, [user, loading, router, pathname]);
 
     useEffect(() => {
+        if (!loading && user?.mustChangePassword && pathname !== '/change-password') {
+            router.push('/change-password');
+        }
+    }, [loading, pathname, router, user]);
+
+    useEffect(() => {
         if (!user) return;
         const fetchReady = () => {
             fetch('/api/orders?status=ready')
                 .then(r => r.json())
-                .then(d => { if (Array.isArray(d)) setReadyOrders(d); })
+                .then(d => { if (Array.isArray(d)) setReadyOrders(d as ReadyOrder[]); })
                 .catch(() => { });
         };
         fetchReady();
         const interval = setInterval(fetchReady, 10000);
         return () => clearInterval(interval);
     }, [user]);
+
+    useEffect(() => {
+        document.body.classList.toggle('menu-open', sidebarOpen);
+        return () => document.body.classList.remove('menu-open');
+    }, [sidebarOpen]);
+
+    useEffect(() => {
+        const formatter = new Intl.DateTimeFormat('en-US', {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+        });
+
+        const updateHeaderDate = () => {
+            setHeaderDate(formatter.format(new Date()));
+        };
+
+        updateHeaderDate();
+        const interval = window.setInterval(updateHeaderDate, 60000);
+        return () => window.clearInterval(interval);
+    }, []);
 
     const markAsServed = async (id: string) => {
         await fetch(`/api/orders/${id}`, {
@@ -42,10 +80,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         setReadyOrders(prev => prev.filter(o => o.id !== id));
     };
 
-    if (loading || !user) {
+    if (loading || !user || (user.mustChangePassword && pathname !== '/change-password')) {
         return (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
-                <div className="loading-spinner" />
+            <div className="fullscreen-shell">
+                <div className="fullscreen-panel">
+                    <span className="fullscreen-kicker">Preparing service</span>
+                    <div className="loading-spinner" />
+                    <p className="fullscreen-copy">Loading your station and live orders.</p>
+                </div>
             </div>
         );
     }
@@ -61,7 +103,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         '/inventory': 'Inventory',
         '/staff': 'Staff Management',
         '/reports': 'Reports',
-        '/settings': 'System Settings'
     };
 
     const getTitle = () => {
@@ -69,47 +110,65 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         return titleMap[mainPath] || 'Restaurant System';
     };
 
+    const roleLabel = user.role.charAt(0).toUpperCase() + user.role.slice(1);
+    const userInitials = user.name.split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase();
+
     return (
         <div className="app-layout">
-            <Sidebar />
+            <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
             <main className="main-content">
                 <header className="header">
                     <div className="header-left">
-                        <h1 className="page-title">{getTitle()}</h1>
-                        <p className="page-subtitle">Real-time restaurant operations</p>
+                        <button
+                            className="mobile-nav-toggle"
+                            onClick={() => setSidebarOpen(true)}
+                            aria-label="Open navigation"
+                        >
+                            <Menu size={18} />
+                        </button>
+                        <div className="header-title-group">
+                            <span className="header-kicker">Service command center</span>
+                            <div className="header-title-row">
+                                <h1 className="page-title">{getTitle()}</h1>
+                                <span className="header-chip">{roleLabel}</span>
+                            </div>
+                            <p className="page-subtitle">Real-time restaurant operations with live floor awareness.</p>
+                        </div>
                     </div>
-                    <div className="header-right" style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                        {user?.role !== 'kitchen' && (
-                            <div style={{ position: 'relative' }}>
+                    <div className="header-right">
+                        {user?.role === 'waiter' && (
+                            <div className="header-notification-wrap">
                                 <button
                                     onClick={() => setShowNotifs(!showNotifs)}
-                                    style={{ background: 'var(--bg-input)', border: 'none', color: 'var(--text-primary)', padding: 8, borderRadius: '50%', cursor: 'pointer', display: 'flex', alignItems: 'center', position: 'relative' }}
+                                    className="header-icon-button"
+                                    aria-label="Toggle ready order notifications"
+                                    aria-expanded={showNotifs}
                                 >
                                     <Bell size={18} />
                                     {readyOrders.length > 0 && (
-                                        <span style={{ position: 'absolute', top: 0, right: 0, background: 'var(--danger)', color: 'white', fontSize: 10, fontWeight: 'bold', width: 16, height: 16, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', transform: 'translate(25%, -25%)' }}>
+                                        <span className="header-icon-badge">
                                             {readyOrders.length}
                                         </span>
                                     )}
                                 </button>
 
                                 {showNotifs && (
-                                    <div style={{ position: 'absolute', top: 40, right: 0, width: 320, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', boxShadow: '0 10px 25px rgba(0,0,0,0.5)', zIndex: 1000, overflow: 'hidden' }}>
-                                        <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', fontWeight: 'bold', fontSize: 13, background: 'var(--surface-active)', color: 'var(--brand-300)' }}>
+                                    <div className="header-popover">
+                                        <div className="header-popover-heading">
                                             Ready for Pickup
                                         </div>
-                                        <div style={{ maxHeight: 300, overflowY: 'auto' }}>
+                                        <div className="header-popover-body">
                                             {readyOrders.length === 0 ? (
-                                                <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No orders currently ready.</div>
+                                                <div className="header-popover-empty">No orders currently ready.</div>
                                             ) : readyOrders.map(order => (
-                                                <div key={order.id} style={{ padding: 12, borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                                    <div>
-                                                        <div style={{ fontWeight: 'bold', fontSize: 13 }}>Order #{order.orderNumber}</div>
-                                                        <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                                                <div key={order.id} className="header-popover-item">
+                                                    <div className="header-popover-copy">
+                                                        <div className="header-popover-order">Order #{order.orderNumber}</div>
+                                                        <div className="header-popover-detail">
                                                             {order.type === 'dine-in' ? `Table ${order.table?.number}` : 'Takeaway'} • {order.items?.length || 0} items
                                                         </div>
                                                     </div>
-                                                    <button onClick={() => markAsServed(order.id)} style={{ background: 'var(--success)', color: 'white', border: 'none', borderRadius: '4px', padding: '6px 10px', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                                    <button type="button" onClick={() => markAsServed(order.id)} className="header-popover-action">
                                                         <Check size={12} /> Serve
                                                     </button>
                                                 </div>
@@ -120,11 +179,16 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                             </div>
                         )}
 
-                        <div className="badge available">
+                        <div className="badge available header-status-pill">
                             <span className="badge-dot" /> System Online
                         </div>
-                        <div style={{ background: 'var(--bg-input)', padding: '6px 12px', borderRadius: 'var(--radius-full)', fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
-                            {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                        <div className="header-date-pill">{headerDate}</div>
+                        <div className="header-profile">
+                            <span className="header-profile-avatar">{userInitials}</span>
+                            <div className="header-profile-copy">
+                                <span className="header-profile-name">{user.name}</span>
+                                <span className="header-profile-role">{roleLabel}</span>
+                            </div>
                         </div>
                     </div>
                 </header>
