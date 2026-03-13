@@ -3,6 +3,17 @@ import { Search, Plus, Minus, Trash2, CreditCard, X } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { useSettings } from '@/contexts/SettingsContext';
 import { formatCurrency } from '@/lib/currency';
+import PaymentFlowSelector from '@/components/PaymentFlowSelector';
+import {
+    getManualPaymentMethodLabel,
+    getOrderPaymentConfig,
+    isManualPaymentMethod,
+    type ManualPaymentFlow,
+    type ManualPaymentMethod,
+    type PaymentChannel,
+} from '@/lib/payment-flow';
+
+const ensureArray = <T,>(value: unknown): T[] => Array.isArray(value) ? value as T[] : [];
 
 export default function OrderModal({ table, onClose }: { table: any, onClose: () => void }) {
     const { settings } = useSettings();
@@ -16,7 +27,9 @@ export default function OrderModal({ table, onClose }: { table: any, onClose: ()
     const [cart, setCart] = useState<{ id: string, name: string, price: number, quantity: number, notes: string }[]>([]);
     const [confirmCancelId, setConfirmCancelId] = useState<string | null>(null);
     const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
-    const [paymentMethod, setPaymentMethod] = useState<'cash' | 'monime'>('cash');
+    const [paymentChannel, setPaymentChannel] = useState<PaymentChannel>('manual');
+    const [manualPaymentMethod, setManualPaymentMethod] = useState<ManualPaymentMethod>('cash');
+    const [manualPaymentFlow, setManualPaymentFlow] = useState<ManualPaymentFlow>('settle_now');
     const [submitting, setSubmitting] = useState(false);
 
     useEffect(() => {
@@ -24,11 +37,16 @@ export default function OrderModal({ table, onClose }: { table: any, onClose: ()
             fetch('/api/categories').then(r => r.json()),
             fetch('/api/menu').then(r => r.json()),
         ]).then(([cats, items]) => {
-            setCategories(cats);
-            setMenuItems(items);
+            setCategories(ensureArray(cats));
+            setMenuItems(ensureArray(items));
             setLoading(false);
+        }).catch(() => {
+            setCategories([]);
+            setMenuItems([]);
+            setLoading(false);
+            toast('error', 'Failed to load menu data');
         });
-    }, []);
+    }, [toast]);
 
     const filteredItems = menuItems.filter(item => {
         const matchesCat = activeCategory === 'all' || item.categoryId === activeCategory;
@@ -67,18 +85,21 @@ export default function OrderModal({ table, onClose }: { table: any, onClose: ()
         if (cart.length === 0) return toast('error', 'Cart is empty');
         setSubmitting(true);
 
+        const paymentConfig = getOrderPaymentConfig({
+            paymentChannel,
+            manualPaymentMethod,
+            manualPaymentFlow,
+        });
+
         const payload = {
             tableId: table.id,
             type: 'dine-in',
-            paymentMethod,
-            paymentStatus: paymentMethod === 'monime' ? 'processing' : 'unpaid',
-            status: paymentMethod === 'monime' ? 'payment_pending_confirmation' : 'draft',
-            deferActivation: true,
+            ...paymentConfig,
             items: cart.map(i => ({ menuItemId: i.id, quantity: i.quantity, notes: i.notes }))
         };
 
         try {
-            if (!editingOrderId && paymentMethod === 'monime') {
+            if (!editingOrderId && paymentChannel === 'monime') {
                 const res = await fetch('/api/payments/monime/checkout', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -107,9 +128,20 @@ export default function OrderModal({ table, onClose }: { table: any, onClose: ()
                 throw new Error(editingOrderId ? 'Failed to update order' : 'Failed to create order');
             }
 
-            toast('success', editingOrderId ? 'Order updated successfully' : paymentMethod === 'monime' ? 'Checkout created. Waiting for payment confirmation.' : 'Unpaid order saved. Confirm payment to send it to the kitchen.');
+            toast(
+                'success',
+                editingOrderId
+                    ? 'Order updated successfully'
+                    : paymentChannel === 'monime'
+                        ? 'Checkout created. Waiting for payment confirmation.'
+                        : manualPaymentFlow === 'settle_now'
+                            ? `${getManualPaymentMethodLabel(manualPaymentMethod)} payment recorded and order sent to kitchen.`
+                            : 'Open tab saved. Settle it later from this checkout panel.'
+            );
             setEditingOrderId(null);
-            setPaymentMethod('cash');
+            setPaymentChannel('manual');
+            setManualPaymentMethod('cash');
+            setManualPaymentFlow('settle_now');
             onClose();
         } catch (error) {
             toast('error', error instanceof Error ? error.message : editingOrderId ? 'Failed to update order' : 'Failed to create order');
@@ -133,14 +165,18 @@ export default function OrderModal({ table, onClose }: { table: any, onClose: ()
     };
 
     const confirmManualPayment = async (orderId: string) => {
+        const existingOrder = table.orders?.find((order: any) => order.id === orderId);
+        const storedMethod = isManualPaymentMethod(existingOrder?.paymentMethod)
+            ? existingOrder.paymentMethod
+            : 'cash';
         const res = await fetch(`/api/orders/${orderId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'confirm_manual_payment', paymentMethod: 'cash' })
+            body: JSON.stringify({ action: 'confirm_manual_payment', paymentMethod: storedMethod })
         });
 
         if (res.ok) {
-            toast('success', 'Payment confirmed and order sent to kitchen');
+            toast('success', `${getManualPaymentMethodLabel(storedMethod)} payment confirmed and order sent to kitchen`);
             onClose();
         } else {
             toast('error', 'Failed to confirm payment');
@@ -233,10 +269,14 @@ export default function OrderModal({ table, onClose }: { table: any, onClose: ()
                                 <div className="badge mt-2" style={{ background: 'rgba(255,255,255,0.1)' }}>Table {table.number}</div>
                                 {!editingOrderId && (
                                     <div className="mt-3">
-                                        <select className="form-select text-sm" value={paymentMethod} onChange={e => setPaymentMethod(e.target.value as 'cash' | 'monime')}>
-                                            <option value="cash">Manual payment</option>
-                                            <option value="monime">Monime checkout</option>
-                                        </select>
+                                        <PaymentFlowSelector
+                                            paymentChannel={paymentChannel}
+                                            onPaymentChannelChange={setPaymentChannel}
+                                            manualPaymentMethod={manualPaymentMethod}
+                                            onManualPaymentMethodChange={setManualPaymentMethod}
+                                            manualPaymentFlow={manualPaymentFlow}
+                                            onManualPaymentFlowChange={setManualPaymentFlow}
+                                        />
                                     </div>
                                 )}
                             </div>
@@ -263,7 +303,7 @@ export default function OrderModal({ table, onClose }: { table: any, onClose: ()
                                                                             onClick={() => confirmManualPayment(o.id)}
                                                                             style={{ fontSize: 11, color: '#10b981', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
                                                                         >
-                                                                            Confirm Payment
+                                                                            Settle {getManualPaymentMethodLabel(o.paymentMethod)}
                                                                         </button>
                                                                     )}
                                                                     <button
@@ -337,7 +377,7 @@ export default function OrderModal({ table, onClose }: { table: any, onClose: ()
                                     </div>
                                 ) : (
                                     <button className="btn btn-primary w-full mt-4" onClick={submitOrder} disabled={cart.length === 0 || submitting} style={{ padding: 12, justifyContent: 'center' }}>
-                                        <CreditCard size={16} /> {submitting ? 'Processing...' : paymentMethod === 'monime' ? 'Pay with Monime' : 'Save Unpaid Order'}
+                                        <CreditCard size={16} /> {submitting ? 'Processing...' : paymentChannel === 'monime' ? 'Pay with Monime' : manualPaymentFlow === 'settle_now' ? `Collect ${getManualPaymentMethodLabel(manualPaymentMethod)} & Send to Kitchen` : 'Save Open Tab'}
                                     </button>
                                 )}
                             </div>

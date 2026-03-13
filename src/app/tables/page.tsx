@@ -1,5 +1,5 @@
 'use client';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import AppLayout from '@/components/AppLayout';
 import { useToast } from '@/contexts/ToastContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -8,9 +8,40 @@ import OrderModal from '@/components/OrderModal';
 import {
     GitMerge, UtensilsCrossed, ShoppingBag, Truck,
     CalendarDays, Printer, RefreshCw, ZoomIn, ZoomOut,
-    Users, X, CheckCircle, ArrowRight, Link, Plus, Pencil, Trash2
+    Users, X, CheckCircle, ArrowRight, Link, Plus, Pencil, Trash2, LocateFixed,
+    BarChart3, DollarSign, ShoppingCart
 } from 'lucide-react';
 import { formatCurrency } from '@/lib/currency';
+
+type AnalyticsRange = 'day' | 'week' | 'month';
+
+type TableAnalytics = {
+    revenue: number;
+    ordersCount: number;
+    avgTicket: number;
+    lastOrderAt: string | null;
+    dineInOrders: number;
+    takeoutOrders: number;
+    activeOrders: number;
+    revenueDeltaPct: number;
+};
+
+const ANALYTICS_RANGE_LABELS: Record<AnalyticsRange, string> = {
+    day: 'Day',
+    week: 'Week',
+    month: 'Month',
+};
+
+const EMPTY_ANALYTICS: TableAnalytics = {
+    revenue: 0,
+    ordersCount: 0,
+    avgTicket: 0,
+    lastOrderAt: null,
+    dineInOrders: 0,
+    takeoutOrders: 0,
+    activeOrders: 0,
+    revenueDeltaPct: 0,
+};
 
 /* ─── Table positions as % of canvas (matching Figma layout exactly) ──────── */
 const TABLE_LAYOUT: Record<number, { x: number; y: number; shape: 'rect' | 'circle' }> = {
@@ -50,15 +81,21 @@ function getTableLayout(table: any) {
     };
 }
 
-function getElapsedMinutes(orders: any[]): number | null {
+function getElapsedMinutes(orders: any[], now: number | null): number | null {
     if (!orders || orders.length === 0) return null;
-    return Math.floor((Date.now() - new Date(orders[0].createdAt).getTime()) / 60000);
+    if (now === null) return null;
+    return Math.floor((now - new Date(orders[0].createdAt).getTime()) / 60000);
 }
 
 function formatTimer(minutes: number): string {
     const h = Math.floor(minutes / 60);
     const m = minutes % 60;
     return h > 0 ? `${h}h${String(m).padStart(2, '0')}` : `${String(m).padStart(2, '0')}:00`;
+}
+
+function formatShortMoney(amount: number, currencySymbol: string) {
+    if (amount >= 1000) return `${currencySymbol}${(amount / 1000).toFixed(1)}k`;
+    return formatCurrency(amount, currencySymbol);
 }
 
 /* ─── Status-based visual tokens ──────────────────────────────────────────── */
@@ -140,29 +177,46 @@ function CircleSeats({ r, capacity, color }: { r: number; capacity: number; colo
 
 /* ─── Single Table Pod ──────────────────────────────────────────────────────*/
 type MergeHighlight = 'none' | 'source' | 'target' | 'dim';
+type DragPreview = { x: number; y: number };
 function TablePod({
     table,
+    now,
     onClick,
     mergeHighlight = 'none',
     isAdmin = false,
+    viewerRole = 'waiter',
+    currencySymbol = '$',
     onEdit,
     onDelete,
+    onDragStart,
+    dragPreview,
+    isDragging = false,
 }: {
     table: any;
+    now: number | null;
     onClick: () => void;
     mergeHighlight?: MergeHighlight;
     isAdmin?: boolean;
+    viewerRole?: string;
+    currencySymbol?: string;
     onEdit?: (table: any) => void;
     onDelete?: (table: any) => void;
+    onDragStart?: (table: any, event: React.PointerEvent<HTMLButtonElement>) => void;
+    dragPreview?: DragPreview;
+    isDragging?: boolean;
 }) {
-    const layout = getTableLayout(table);
-    const elapsed = getElapsedMinutes(table.orders);
+    const baseLayout = getTableLayout(table);
+    const layout = dragPreview || baseLayout;
+    const elapsed = getElapsedMinutes(table.orders, now);
     const tok = getTokens(table.status, elapsed);
     const total = table.orders?.reduce((s: number, o: any) => s + (o.total || 0), 0) || 0;
     const waiter = table.orders?.[0]?.user?.name;
+    const analytics: TableAnalytics = table.analytics || EMPTY_ANALYTICS;
+    const isManagerView = viewerRole === 'manager';
+    const layoutShape = dragPreview ? (table.shape === 'circle' ? 'circle' : 'rect') : baseLayout.shape;
 
     const isBig = table.number === 5; // "Freetown" equivalent — largest circle
-    const isCircle = layout.shape === 'circle';
+    const isCircle = layoutShape === 'circle';
     const r = isBig ? 68 : isCircle ? 52 : 0;
     const W = isCircle ? r * 2 : table.capacity >= 6 ? 148 : 130;
     const H = isCircle ? r * 2 : 100;
@@ -182,11 +236,12 @@ function TablePod({
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
-            cursor: 'pointer',
+            cursor: isDragging ? 'grabbing' : 'pointer',
             userSelect: 'none',
             opacity: mergeOpacity,
-            transition: 'opacity 0.2s',
+            transition: isDragging ? 'none' : 'opacity 0.2s',
             pointerEvents: 'auto',
+            zIndex: isDragging ? 18 : 1,
         }}
             onClick={onClick}
         >
@@ -216,6 +271,8 @@ function TablePod({
                 border: `2px solid ${mergeBorder}`,
                 borderRadius: isCircle ? '50%' : 14,
                 boxShadow: mergeShadow,
+                outline: isDragging ? '2px solid rgba(56,189,248,0.92)' : 'none',
+                outlineOffset: 4,
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: 'center',
@@ -227,6 +284,17 @@ function TablePod({
             >
                 {isAdmin && (
                     <div style={{ position: 'absolute', top: 8, right: 8, display: 'flex', gap: 6, zIndex: 3 }}>
+                        <button
+                            onPointerDown={(event) => {
+                                event.stopPropagation();
+                                event.preventDefault();
+                                onDragStart?.(table, event);
+                            }}
+                            style={{ background: isDragging ? 'rgba(14,165,233,0.24)' : 'rgba(2,132,199,0.16)', border: '1px solid rgba(56,189,248,0.28)', color: '#7dd3fc', borderRadius: 8, padding: 6, display: 'flex', cursor: isDragging ? 'grabbing' : 'grab' }}
+                            title="Drag to reposition table"
+                        >
+                            <LocateFixed size={12} />
+                        </button>
                         <button
                             onClick={(event) => {
                                 event.stopPropagation();
@@ -262,8 +330,16 @@ function TablePod({
                     {table.mergeGroupId && <Link size={14} style={{ color: '#2563eb' }} />}
                 </div>
 
-                {/* Bill */}
-                {total > 0 && (
+                {isManagerView ? (
+                    <div style={{ marginTop: 7, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                        <div style={{ fontSize: 11, fontWeight: 800, color: '#f8fafc' }}>
+                            {analytics.ordersCount > 0 ? `${analytics.ordersCount} orders` : 'No sales'}
+                        </div>
+                        <div style={{ fontSize: 11, color: '#94a3b8' }}>
+                            {analytics.revenue > 0 ? formatShortMoney(analytics.revenue, currencySymbol) : 'No revenue'}
+                        </div>
+                    </div>
+                ) : total > 0 && (
                     <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 3 }}>
                         ${total.toFixed(0)}
                     </div>
@@ -278,7 +354,7 @@ function TablePod({
             </div>
 
             {/* Waiter name below table */}
-            {waiter && (
+            {!isManagerView && waiter && (
                 <div style={{ fontSize: 11, color: '#64748b', marginTop: 6, maxWidth: W, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {waiter.split(' ')[0][0]}. {waiter.split(' ').slice(-1)[0]}
                 </div>
@@ -293,7 +369,7 @@ function TablePod({
                 fontSize: 10,
                 fontWeight: 800,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                marginTop: waiter ? 2 : 6,
+                marginTop: !isManagerView && waiter ? 2 : 6,
             }}>
                 {table.number}
             </div>
@@ -313,18 +389,46 @@ export default function TablesPage() {
     const { user } = useAuth();
     const { settings } = useSettings();
     const canvasRef = useRef<HTMLDivElement | null>(null);
+    const pageScrollRef = useRef<HTMLDivElement | null>(null);
+    const scrollRef = useRef<HTMLDivElement | null>(null);
+    const panStateRef = useRef<{ pointerId: number | null; startX: number; startY: number; scrollLeft: number; scrollTop: number; moved: boolean; axis: 'x' | 'y' | null; } | null>(null);
+    const dragStateRef = useRef<{
+        tableId: string;
+        pointerId: number;
+        offsetX: number;
+        offsetY: number;
+        label: string;
+        moved: boolean;
+    } | null>(null);
+    const layoutPreviewRef = useRef<Record<string, DragPreview>>({});
+    const suppressTapRef = useRef(false);
     const [tables, setTables] = useState<any[]>([]);
+    const [tableAnalyticsRange, setTableAnalyticsRange] = useState<AnalyticsRange>('week');
+    const [analyticsMeta, setAnalyticsMeta] = useState<{
+        label: string;
+        summary: {
+            totalRevenue: number;
+            totalOrders: number;
+            avgTicket: number;
+            occupiedTables: number;
+            tablesWithSales: number;
+        };
+    } | null>(null);
     const [loading, setLoading] = useState(true);
     const [selectedTable, setSelectedTable] = useState<any>(null);
     const [zoom, setZoom] = useState(100);
+    const [now, setNow] = useState<number | null>(null);
+    const [isCompactViewport, setIsCompactViewport] = useState(false);
+    const [dragPreviewById, setDragPreviewById] = useState<Record<string, DragPreview>>({});
+    const [activeDragTableId, setActiveDragTableId] = useState<string | null>(null);
+    const [activeDragLabel, setActiveDragLabel] = useState('');
+    const [savingDragTableId, setSavingDragTableId] = useState<string | null>(null);
     const toast = useToast();
     const [isTableModalOpen, setIsTableModalOpen] = useState(false);
     const [tableModalMode, setTableModalMode] = useState<'add' | 'edit'>('add');
     const [editingTable, setEditingTable] = useState<any>(null);
     const [savingTable, setSavingTable] = useState(false);
     const [tableForm, setTableForm] = useState({ number: '', section: '', capacity: '4', status: 'available', shape: 'rect' });
-    const [placingTable, setPlacingTable] = useState<any>(null);
-    const [savingPlacement, setSavingPlacement] = useState(false);
 
     // ── Merge state ────────────────────────────────────────────────────────
     type MergeStep = 'idle' | 'selectSource' | 'selectTarget' | 'confirm';
@@ -336,12 +440,135 @@ export default function TablesPage() {
     const startMerge = () => { setMergeStep('selectSource'); setMergeSource(null); setMergeTarget(null); };
     const cancelMerge = () => { setMergeStep('idle'); setMergeSource(null); setMergeTarget(null); };
 
-    const fetchTables = () => {
-        return fetch('/api/tables')
-            .then(res => res.json())
-            .then(data => { setTables(data); setLoading(false); });
-    };
-    useEffect(() => { fetchTables(); const i = setInterval(fetchTables, 30000); return () => clearInterval(i); }, []);
+    const fetchTables = useCallback(() => {
+        const isManagerView = user?.role === 'manager';
+
+        const request = isManagerView
+            ? Promise.all([
+                fetch('/api/tables').then(res => res.json()),
+                fetch(`/api/tables/analytics?range=${tableAnalyticsRange}`).then(res => res.json()),
+            ]).then(([tableData, analyticsData]) => {
+                const byTable = analyticsData?.byTable || {};
+                const mergedTables = Array.isArray(tableData)
+                    ? tableData.map((table: any) => ({
+                        ...table,
+                        analytics: byTable[table.id] || EMPTY_ANALYTICS,
+                    }))
+                    : [];
+
+                setTables(mergedTables);
+                setSelectedTable((prev: any) => prev ? mergedTables.find((table: any) => table.id === prev.id) || null : prev);
+                setAnalyticsMeta({
+                    label: analyticsData?.label || ANALYTICS_RANGE_LABELS[tableAnalyticsRange],
+                    summary: analyticsData?.summary || {
+                        totalRevenue: 0,
+                        totalOrders: 0,
+                        avgTicket: 0,
+                        occupiedTables: 0,
+                        tablesWithSales: 0,
+                    },
+                });
+            })
+            : fetch('/api/tables')
+                .then(res => res.json())
+                .then(data => {
+                    setTables(Array.isArray(data) ? data : []);
+                    setSelectedTable((prev: any) => prev && Array.isArray(data) ? data.find((table: any) => table.id === prev.id) || null : prev);
+                    setAnalyticsMeta(null);
+                });
+
+        return request.finally(() => setLoading(false));
+    }, [tableAnalyticsRange, user?.role]);
+
+    useEffect(() => {
+        setLoading(true);
+        void fetchTables();
+        const i = setInterval(fetchTables, 30000);
+        return () => clearInterval(i);
+    }, [fetchTables]);
+    useEffect(() => {
+        const updateClock = () => setNow(Date.now());
+        updateClock();
+        const interval = window.setInterval(updateClock, 60000);
+        return () => window.clearInterval(interval);
+    }, []);
+
+    useEffect(() => {
+        const updateViewport = () => {
+            setIsCompactViewport(window.innerWidth <= 1024);
+        };
+
+        updateViewport();
+        window.addEventListener('resize', updateViewport);
+        return () => window.removeEventListener('resize', updateViewport);
+    }, []);
+
+    const syncDragPreview = useCallback((tableId: string, preview: DragPreview | null) => {
+        layoutPreviewRef.current = preview
+            ? { ...layoutPreviewRef.current, [tableId]: preview }
+            : Object.fromEntries(Object.entries(layoutPreviewRef.current).filter(([id]) => id !== tableId));
+
+        setDragPreviewById(layoutPreviewRef.current);
+    }, []);
+
+    const readResponsePayload = useCallback(async (response: Response) => {
+        const raw = await response.text();
+        if (!raw) return null;
+
+        try {
+            return JSON.parse(raw);
+        } catch {
+            return { error: raw };
+        }
+    }, []);
+
+    const persistTablePosition = useCallback(async (tableId: string, preview: DragPreview, label: string) => {
+        setSavingDragTableId(tableId);
+
+        try {
+            const res = await fetch(`/api/tables/${tableId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ layoutX: Number(preview.x.toFixed(2)), layoutY: Number(preview.y.toFixed(2)) }),
+            });
+            const data = await readResponsePayload(res);
+
+            if (!res.ok) {
+                throw new Error(data?.error || 'Unable to save table position');
+            }
+
+            toast('success', `${label} repositioned`);
+            await fetchTables();
+        } catch (error: any) {
+            toast('error', error.message || 'Unable to save table position');
+        } finally {
+            syncDragPreview(tableId, null);
+            setSavingDragTableId(null);
+        }
+    }, [fetchTables, readResponsePayload, syncDragPreview, toast]);
+
+    const startTableDrag = useCallback((table: any, event: React.PointerEvent<HTMLButtonElement>) => {
+        if (!canvasRef.current || mergeStep !== 'idle' || user?.role !== 'admin') return;
+
+        const rect = canvasRef.current.getBoundingClientRect();
+        const layout = getTableLayout(table);
+        const startLeft = rect.left + (layout.x / 100) * rect.width;
+        const startTop = rect.top + (layout.y / 100) * rect.height;
+
+        dragStateRef.current = {
+            tableId: table.id,
+            pointerId: event.pointerId,
+            offsetX: event.clientX - startLeft,
+            offsetY: event.clientY - startTop,
+            label: table.section || `Table ${table.number}`,
+            moved: false,
+        };
+
+        syncDragPreview(table.id, { x: layout.x, y: layout.y });
+        setActiveDragTableId(table.id);
+        setActiveDragLabel(table.section || `Table ${table.number}`);
+        suppressTapRef.current = true;
+    }, [mergeStep, syncDragPreview, user?.role]);
 
     const openAddTableModal = () => {
         setTableModalMode('add');
@@ -409,40 +636,139 @@ export default function TablesPage() {
         }
     };
 
-    const beginTablePlacement = (table: any) => {
-        setPlacingTable(table);
-        toast('info', `Click a spot on the floor to place ${table.section || `Table ${table.number}`}`);
+    useEffect(() => {
+        const clamp = (value: number) => Math.min(100, Math.max(0, value));
+
+        const handlePointerMove = (event: PointerEvent) => {
+            const dragState = dragStateRef.current;
+            if (!dragState || event.pointerId !== dragState.pointerId || !canvasRef.current) return;
+
+            const rect = canvasRef.current.getBoundingClientRect();
+            const nextX = clamp(((event.clientX - rect.left - dragState.offsetX) / rect.width) * 100);
+            const nextY = clamp(((event.clientY - rect.top - dragState.offsetY) / rect.height) * 100);
+
+            dragState.moved = true;
+            syncDragPreview(dragState.tableId, { x: nextX, y: nextY });
+        };
+
+        const clearSuppressedTap = () => {
+            window.setTimeout(() => {
+                suppressTapRef.current = false;
+            }, 120);
+        };
+
+        const handlePointerEnd = async (event: PointerEvent) => {
+            const dragState = dragStateRef.current;
+            if (!dragState || event.pointerId !== dragState.pointerId) return;
+
+            dragStateRef.current = null;
+            setActiveDragTableId(null);
+            setActiveDragLabel('');
+
+            const preview = layoutPreviewRef.current[dragState.tableId];
+
+            if (!dragState.moved || !preview) {
+                syncDragPreview(dragState.tableId, null);
+                clearSuppressedTap();
+                return;
+            }
+
+            await persistTablePosition(dragState.tableId, preview, dragState.label);
+            clearSuppressedTap();
+        };
+
+        window.addEventListener('pointermove', handlePointerMove);
+        window.addEventListener('pointerup', handlePointerEnd);
+        window.addEventListener('pointercancel', handlePointerEnd);
+
+        return () => {
+            window.removeEventListener('pointermove', handlePointerMove);
+            window.removeEventListener('pointerup', handlePointerEnd);
+            window.removeEventListener('pointercancel', handlePointerEnd);
+        };
+    }, [persistTablePosition, syncDragPreview]);
+
+    const isWaiterWorkspace = user?.role === 'waiter' && isCompactViewport;
+
+    const getActiveScrollContainer = () => {
+        if (isWaiterWorkspace && pageScrollRef.current) return pageScrollRef.current;
+        return scrollRef.current;
     };
 
-    const placeTable = async (event: React.MouseEvent<HTMLDivElement>) => {
-        if (!placingTable || !canvasRef.current) return;
+    const isInteractiveTarget = (target: HTMLElement | null) => (
+        !!target?.closest('button, a, input, select, textarea, label, [role="button"]')
+    );
 
-        const rect = canvasRef.current.getBoundingClientRect();
-        const x = ((event.clientX - rect.left) / rect.width) * 100;
-        const y = ((event.clientY - rect.top) / rect.height) * 100;
+    const startCanvasPan = (event: React.PointerEvent<HTMLDivElement>) => {
+        const activeScrollContainer = getActiveScrollContainer();
+        if (dragStateRef.current) return;
+        if (!isCompactViewport || !activeScrollContainer) return;
+        const target = event.target as HTMLElement;
+        if (isInteractiveTarget(target)) return;
 
-        setSavingPlacement(true);
-        try {
-            const res = await fetch(`/api/tables/${placingTable.id}`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ layoutX: Number(x.toFixed(2)), layoutY: Number(y.toFixed(2)) }),
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Unable to place table');
+        panStateRef.current = {
+            pointerId: event.pointerId,
+            startX: event.clientX,
+            startY: event.clientY,
+            scrollLeft: activeScrollContainer.scrollLeft,
+            scrollTop: activeScrollContainer.scrollTop,
+            moved: false,
+            axis: null,
+        };
+        event.currentTarget.setPointerCapture?.(event.pointerId);
+    };
 
-            toast('success', `${placingTable.section || `Table ${placingTable.number}`} positioned`);
-            setPlacingTable(null);
-            await fetchTables();
-        } catch (error: any) {
-            toast('error', error.message || 'Unable to save table position');
-        } finally {
-            setSavingPlacement(false);
+    const moveCanvasPan = (event: React.PointerEvent<HTMLDivElement>) => {
+        const activeScrollContainer = getActiveScrollContainer();
+        if (dragStateRef.current) return;
+        if (!activeScrollContainer) return;
+        if (!panStateRef.current || panStateRef.current.pointerId !== event.pointerId) return;
+
+        const deltaX = event.clientX - panStateRef.current.startX;
+        const deltaY = event.clientY - panStateRef.current.startY;
+
+        if (!panStateRef.current.axis && Math.abs(deltaX) + Math.abs(deltaY) > 8) {
+            panStateRef.current.axis = Math.abs(deltaX) >= Math.abs(deltaY) ? 'x' : 'y';
+        }
+
+        if (panStateRef.current.axis !== 'x') return;
+
+        if (!panStateRef.current.moved && Math.abs(deltaX) + Math.abs(deltaY) > 8) {
+            panStateRef.current.moved = true;
+            suppressTapRef.current = true;
+        }
+
+        if (!panStateRef.current.moved) return;
+
+        activeScrollContainer.scrollLeft = panStateRef.current.scrollLeft - deltaX;
+        activeScrollContainer.scrollTop = panStateRef.current.scrollTop - deltaY;
+        event.preventDefault();
+    };
+
+    const endCanvasPan = (event: React.PointerEvent<HTMLDivElement>) => {
+        if (dragStateRef.current) return;
+        if (!panStateRef.current || panStateRef.current.pointerId !== event.pointerId) return;
+        event.currentTarget.releasePointerCapture?.(event.pointerId);
+        panStateRef.current = null;
+
+        if (suppressTapRef.current) {
+            window.setTimeout(() => {
+                suppressTapRef.current = false;
+            }, 120);
         }
     };
 
     // Canvas click handler — routes to merge selection or order modal
     const handleTableClick = (table: any) => {
+        if (suppressTapRef.current) return;
+        if (user?.role === 'manager') {
+            setSelectedTable(table);
+            return;
+        }
+        if (mergeStep === 'idle' && user?.role !== 'waiter') {
+            toast('info', 'Only waiters can take or edit orders.');
+            return;
+        }
         if (mergeStep === 'selectSource') {
             if (table.status !== 'available') {
                 toast('error', `${table.section} is not available — only free tables can be merged`);
@@ -504,29 +830,91 @@ export default function TablesPage() {
     };
     const totalPax = tables.filter(t => t.status === 'occupied').reduce((s, t) => s + t.capacity, 0);
     const totalRevenu = tables.reduce((s, t) => s + (t.orders?.reduce((a: number, o: any) => a + (o.total || 0), 0) || 0), 0);
+    const selectedTableAnalytics: TableAnalytics = selectedTable?.analytics || EMPTY_ANALYTICS;
+    const managerSummaryCards = analyticsMeta ? [
+        {
+            label: `${analyticsMeta.label} Revenue`,
+            value: formatCurrency(analyticsMeta.summary.totalRevenue || 0, settings.currencySymbol),
+            tone: '#38bdf8',
+            icon: DollarSign,
+        },
+        {
+            label: `${analyticsMeta.label} Orders`,
+            value: String(analyticsMeta.summary.totalOrders || 0),
+            tone: '#f59e0b',
+            icon: ShoppingCart,
+        },
+        {
+            label: 'Average Ticket',
+            value: formatCurrency(analyticsMeta.summary.avgTicket || 0, settings.currencySymbol),
+            tone: '#22c55e',
+            icon: BarChart3,
+        },
+        {
+            label: 'Tables With Sales',
+            value: String(analyticsMeta.summary.tablesWithSales || 0),
+            tone: '#a78bfa',
+            icon: Users,
+        },
+    ] : [];
 
     if (loading) return <AppLayout><div style={{ display: 'flex', justifyContent: 'center', padding: 100 }}><div className="loading-spinner" /></div></AppLayout>;
 
     return (
         <AppLayout>
+            <div
+                className={`floor-page ${user?.role === 'waiter' ? 'floor-page--waiter' : ''}`}
+                onPointerDown={startCanvasPan}
+                onPointerMove={moveCanvasPan}
+                onPointerUp={endCanvasPan}
+                onPointerCancel={endCanvasPan}
+            >
+            <div ref={pageScrollRef} className="floor-page-scroll">
+            <div className="floor-page-content">
             {/* Header row */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <div className="floor-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 16, flexWrap: 'wrap' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <UtensilsCrossed size={17} style={{ color: 'var(--brand-500)' }} />
                     <span style={{ fontWeight: 700, fontSize: 15 }}>Floor Management</span>
                 </div>
-                <div style={{ display: 'flex', gap: 20, fontSize: 13, color: 'var(--text-secondary)' }}>
+                <div className="floor-header-metrics" style={{ display: 'flex', gap: 14, fontSize: 13, color: 'var(--text-secondary)', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                     <span><b style={{ color: '#fff' }}>{counts.seated}</b> Dine-in</span>
                     <span><b style={{ color: '#fff' }}>{counts.ordered}</b> Ordered</span>
                     <span style={{ color: '#22c55e', fontWeight: 700 }}>{formatCurrency(totalRevenu, settings.currencySymbol)} Revenue</span>
+                    {user?.role === 'admin' && (
+                        <button
+                            onClick={openAddTableModal}
+                            style={{
+                                background: 'linear-gradient(135deg, #2563eb, #1d4ed8)',
+                                border: '1px solid rgba(96,165,250,0.45)',
+                                borderRadius: 999,
+                                padding: '9px 14px',
+                                color: '#fff',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 8,
+                                cursor: 'pointer',
+                                fontWeight: 700,
+                                boxShadow: '0 10px 24px rgba(37,99,235,0.22)',
+                            }}
+                        >
+                            <Plus size={14} />
+                            Create Table
+                        </button>
+                    )}
                 </div>
             </div>
 
             {/* Main layout */}
-            <div style={{ display: 'flex', gap: 14, height: 'calc(100vh - 200px)', minHeight: 500 }}>
+            <div className="floor-layout" style={{ display: 'flex', gap: 14, height: 'calc(100vh - 200px)', minHeight: 500 }}>
 
                 {/* ── Floor Plan Canvas ─────────────────────────────────────── */}
-                <div style={{
+                <div className="floor-canvas-shell">
+                <div
+                    ref={scrollRef}
+                    className="floor-canvas-scroll"
+                >
+                <div className="floor-canvas" style={{
                     flex: 1,
                     background: '#101520',
                     borderRadius: 16,
@@ -534,13 +922,13 @@ export default function TablesPage() {
                     position: 'relative',
                     overflow: 'hidden',
                 }}>
-                    {placingTable && (
+                    {(activeDragTableId || savingDragTableId) && (
                         <div style={{
                             position: 'absolute',
                             top: 12,
                             right: 12,
                             zIndex: 20,
-                            background: savingPlacement ? '#1d4ed8' : '#2563eb',
+                            background: savingDragTableId ? '#1d4ed8' : '#2563eb',
                             color: '#fff',
                             borderRadius: 12,
                             padding: '8px 12px',
@@ -550,10 +938,20 @@ export default function TablesPage() {
                             alignItems: 'center',
                             gap: 8,
                         }}>
-                            {savingPlacement ? 'Saving placement…' : `Placing ${placingTable.section || `Table ${placingTable.number}`}`}
-                            <button onClick={() => setPlacingTable(null)} style={{ background: 'rgba(255,255,255,0.18)', border: 'none', color: '#fff', borderRadius: '50%', width: 20, height: 20, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            {savingDragTableId ? 'Saving table position…' : `Dragging ${activeDragLabel}`}
+                            {activeDragTableId && (
+                            <button onClick={() => {
+                                dragStateRef.current = null;
+                                syncDragPreview(activeDragTableId, null);
+                                setActiveDragTableId(null);
+                                setActiveDragLabel('');
+                                window.setTimeout(() => {
+                                    suppressTapRef.current = false;
+                                }, 120);
+                            }} style={{ background: 'rgba(255,255,255,0.18)', border: 'none', color: '#fff', borderRadius: '50%', width: 20, height: 20, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                 <X size={12} />
                             </button>
+                            )}
                         </div>
                     )}
 
@@ -590,11 +988,10 @@ export default function TablesPage() {
                         transform: `scale(${zoom / 100})`,
                         transformOrigin: 'top left',
                         transition: 'transform 0.2s',
-                        cursor: mergeStep !== 'idle' || placingTable ? 'crosshair' : 'default',
+                        cursor: activeDragTableId ? 'grabbing' : mergeStep !== 'idle' ? 'crosshair' : 'default',
                     }}>
                         <div
                             ref={canvasRef}
-                            onClick={placeTable}
                             style={{ position: 'absolute', inset: 0 }}
                         >
                             {tables.map((table) => {
@@ -604,15 +1001,14 @@ export default function TablesPage() {
                                 <TablePod
                                     key={table.id}
                                     table={table}
-                                    onClick={() => {
-                                        if (placingTable) {
-                                            setPlacingTable(table);
-                                            toast('info', `Click a new spot on the floor to place ${table.section || `Table ${table.number}`}`);
-                                            return;
-                                        }
-                                        handleTableClick(table);
-                                    }}
+                                    now={now}
+                                    onClick={() => handleTableClick(table)}
+                                    viewerRole={user?.role}
+                                    currencySymbol={settings.currencySymbol}
                                     isAdmin={user?.role === 'admin'}
+                                    onDragStart={startTableDrag}
+                                    dragPreview={dragPreviewById[table.id]}
+                                    isDragging={activeDragTableId === table.id}
                                     onEdit={openEditTableModal}
                                     onDelete={deleteTable}
                                     mergeHighlight={
@@ -641,149 +1037,194 @@ export default function TablesPage() {
                         <button onClick={fetchTables} style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', display: 'flex' }}><RefreshCw size={13} /></button>
                     </div>
                 </div>
+                </div>
+                </div>
 
                 {/* ── Right Sidebar ─────────────────────────────────────────── */}
-                <div style={{ width: 232, display: 'flex', flexDirection: 'column', gap: 12, flexShrink: 0 }}>
+                <div className="floor-sidebar" style={{ width: 232, display: 'flex', flexDirection: 'column', gap: 12, flexShrink: 0 }}>
 
-                    {/* Quick Actions — only Merge Table (live) */}
-                    <div style={{ background: 'var(--bg-card)', borderRadius: 14, border: '1px solid var(--border)', padding: 14 }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.2, color: 'var(--text-muted)', marginBottom: 10 }}>Quick Action</div>
+                    {user?.role === 'manager' ? (
+                        <>
+                            <div style={{ background: 'linear-gradient(160deg, rgba(15,23,42,0.96), rgba(17,24,39,0.9))', borderRadius: 18, border: '1px solid rgba(148,163,184,0.14)', padding: 16, boxShadow: '0 18px 32px rgba(15,23,42,0.24)' }}>
+                                <div style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1.3, color: '#94a3b8', marginBottom: 10 }}>Table Intelligence</div>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8, marginBottom: 14 }}>
+                                    {(['day', 'week', 'month'] as AnalyticsRange[]).map((range) => (
+                                        <button
+                                            key={range}
+                                            type="button"
+                                            onClick={() => setTableAnalyticsRange(range)}
+                                            style={{
+                                                borderRadius: 999,
+                                                border: `1px solid ${tableAnalyticsRange === range ? 'rgba(56,189,248,0.42)' : 'rgba(71,85,105,0.5)'}`,
+                                                background: tableAnalyticsRange === range ? 'rgba(56,189,248,0.14)' : 'rgba(15,23,42,0.72)',
+                                                color: tableAnalyticsRange === range ? '#e0f2fe' : '#94a3b8',
+                                                padding: '10px 0',
+                                                fontSize: 12,
+                                                fontWeight: 700,
+                                                cursor: 'pointer',
+                                            }}
+                                        >
+                                            {ANALYTICS_RANGE_LABELS[range]}
+                                        </button>
+                                    ))}
+                                </div>
+                                <div style={{ display: 'grid', gap: 10 }}>
+                                    {managerSummaryCards.map((card) => {
+                                        const Icon = card.icon;
+                                        return (
+                                            <div key={card.label} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12, borderRadius: 14, background: 'rgba(15,23,42,0.66)', border: '1px solid rgba(71,85,105,0.32)' }}>
+                                                <div style={{ width: 38, height: 38, borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', background: `${card.tone}22`, color: card.tone }}>
+                                                    <Icon size={16} />
+                                                </div>
+                                                <div>
+                                                    <div style={{ fontSize: 11, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 1 }}>{card.label}</div>
+                                                    <div style={{ fontSize: 18, fontWeight: 800, color: '#f8fafc' }}>{card.value}</div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
 
-                        {mergeStep === 'idle' ? (
-                            <button
-                                onClick={startMerge}
-                                style={{ width: '100%', background: 'var(--surface-active)', border: '1px solid #d97706', borderRadius: 10, padding: '14px 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, cursor: 'pointer', color: '#d97706', fontSize: 13, fontWeight: 700 }}
-                            >
-                                <GitMerge size={18} /> Merge Table
-                            </button>
-                        ) : mergeStep === 'confirm' ? (
-                            /* Confirm card */
-                            <div style={{ background: '#0f1e35', border: '1px solid #2563eb', borderRadius: 10, padding: 14 }}>
-                                <div style={{ fontSize: 12, color: '#93c5fd', fontWeight: 700, marginBottom: 10 }}>Confirm Merge</div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, fontSize: 13 }}>
-                                    <span style={{ background: '#d97706', color: '#000', borderRadius: 8, padding: '4px 10px', fontWeight: 800 }}>{mergeSource?.section}</span>
-                                    <ArrowRight size={14} style={{ color: '#6b7280' }} />
-                                    <span style={{ background: '#2563eb', color: '#fff', borderRadius: 8, padding: '4px 10px', fontWeight: 800 }}>{mergeTarget?.section}</span>
+                            <div style={{ background: 'var(--bg-card)', borderRadius: 14, border: '1px solid var(--border)', padding: 14 }}>
+                                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.2, color: 'var(--text-muted)', marginBottom: 10 }}>
+                                    {selectedTable ? `${selectedTable.section || `Table ${selectedTable.number}`} Snapshot` : 'Table Snapshot'}
                                 </div>
-                                <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 12 }}>
-                                    Both tables will be combined into one seating for a large group.
-                                    <br /><strong style={{ color: '#d97706' }}>{mergeSource?.section}</strong> + <strong style={{ color: '#93c5fd' }}>{mergeTarget?.section}</strong> = <strong style={{ color: '#fff' }}>{(mergeSource?.capacity || 0) + (mergeTarget?.capacity || 0)} seats</strong>
-                                    <br /><span style={{ color: '#4b5563' }}>An order can be placed immediately after confirming.</span>
-                                </div>
-                                <div style={{ display: 'flex', gap: 8 }}>
-                                    <button onClick={cancelMerge} style={{ flex: 1, background: 'var(--surface-active)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px', color: 'var(--text-secondary)', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>Cancel</button>
-                                    <button onClick={executeMerge} disabled={merging} style={{ flex: 1, background: '#2563eb', border: 'none', borderRadius: 8, padding: '10px', color: '#fff', fontWeight: 700, fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                                        {merging ? <div style={{ width: 14, height: 14, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> : <CheckCircle size={14} />}
-                                        {merging ? 'Merging…' : 'Confirm'}
+                                {selectedTable ? (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
+                                            <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 12, padding: 10 }}>
+                                                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Revenue</div>
+                                                <div style={{ fontWeight: 800, color: '#fff', marginTop: 4 }}>{formatCurrency(selectedTableAnalytics.revenue, settings.currencySymbol)}</div>
+                                            </div>
+                                            <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 12, padding: 10 }}>
+                                                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Orders</div>
+                                                <div style={{ fontWeight: 800, color: '#fff', marginTop: 4 }}>{selectedTableAnalytics.ordersCount}</div>
+                                            </div>
+                                            <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 12, padding: 10 }}>
+                                                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Average Ticket</div>
+                                                <div style={{ fontWeight: 800, color: '#fff', marginTop: 4 }}>{formatCurrency(selectedTableAnalytics.avgTicket, settings.currencySymbol)}</div>
+                                            </div>
+                                            <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 12, padding: 10 }}>
+                                                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Live Orders</div>
+                                                <div style={{ fontWeight: 800, color: '#fff', marginTop: 4 }}>{selectedTableAnalytics.activeOrders}</div>
+                                            </div>
+                                        </div>
+                                        <div className="text-sm text-muted">
+                                            Revenue change vs previous {tableAnalyticsRange}: <span style={{ color: selectedTableAnalytics.revenueDeltaPct >= 0 ? '#22c55e' : '#f97316', fontWeight: 700 }}>{selectedTableAnalytics.revenueDeltaPct >= 0 ? '+' : ''}{selectedTableAnalytics.revenueDeltaPct}%</span>
+                                        </div>
+                                        <div className="text-sm text-muted">
+                                            Service mix: {selectedTableAnalytics.dineInOrders} dine-in, {selectedTableAnalytics.takeoutOrders} takeaway or delivery.
+                                        </div>
+                                        <div className="text-sm text-muted">
+                                            Last sale: {selectedTableAnalytics.lastOrderAt ? new Date(selectedTableAnalytics.lastOrderAt).toLocaleString() : 'No completed sales in this range.'}
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="text-sm text-muted">Select any table on the floor to inspect its revenue and order performance for the selected period.</div>
+                                )}
+                            </div>
+
+                            <div style={{ background: 'var(--bg-card)', borderRadius: 14, border: '1px solid var(--border)', padding: 14 }}>
+                                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.2, color: 'var(--text-muted)', marginBottom: 10 }}>Reservations</div>
+                                <button
+                                    type="button"
+                                    onClick={() => toast('info', 'Reservations analytics is coming soon')}
+                                    style={{ width: '100%', background: 'var(--surface-active)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px', color: 'var(--text-secondary)', fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}
+                                >
+                                    <CalendarDays size={16} /> Coming Soon
+                                </button>
+                            </div>
+                        </>
+                    ) : (
+                        <>
+                            <div style={{ background: 'var(--bg-card)', borderRadius: 14, border: '1px solid var(--border)', padding: 14 }}>
+                                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.2, color: 'var(--text-muted)', marginBottom: 10 }}>Quick Action</div>
+
+                                {mergeStep === 'idle' ? (
+                                    <button
+                                        onClick={startMerge}
+                                        style={{ width: '100%', background: 'var(--surface-active)', border: '1px solid #d97706', borderRadius: 10, padding: '14px 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, cursor: 'pointer', color: '#d97706', fontSize: 13, fontWeight: 700 }}
+                                    >
+                                        <GitMerge size={18} /> Merge Table
+                                    </button>
+                                ) : mergeStep === 'confirm' ? (
+                                    <div style={{ background: '#0f1e35', border: '1px solid #2563eb', borderRadius: 10, padding: 14 }}>
+                                        <div style={{ fontSize: 12, color: '#93c5fd', fontWeight: 700, marginBottom: 10 }}>Confirm Merge</div>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, fontSize: 13 }}>
+                                            <span style={{ background: '#d97706', color: '#000', borderRadius: 8, padding: '4px 10px', fontWeight: 800 }}>{mergeSource?.section}</span>
+                                            <ArrowRight size={14} style={{ color: '#6b7280' }} />
+                                            <span style={{ background: '#2563eb', color: '#fff', borderRadius: 8, padding: '4px 10px', fontWeight: 800 }}>{mergeTarget?.section}</span>
+                                        </div>
+                                        <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 12 }}>
+                                            Both tables will be combined into one seating for a large group.
+                                            <br /><strong style={{ color: '#d97706' }}>{mergeSource?.section}</strong> + <strong style={{ color: '#93c5fd' }}>{mergeTarget?.section}</strong> = <strong style={{ color: '#fff' }}>{(mergeSource?.capacity || 0) + (mergeTarget?.capacity || 0)} seats</strong>
+                                            <br /><span style={{ color: '#4b5563' }}>An order can be placed immediately after confirming.</span>
+                                        </div>
+                                        <div style={{ display: 'flex', gap: 8 }}>
+                                            <button onClick={cancelMerge} style={{ flex: 1, background: 'var(--surface-active)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px', color: 'var(--text-secondary)', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>Cancel</button>
+                                            <button onClick={executeMerge} disabled={merging} style={{ flex: 1, background: '#2563eb', border: 'none', borderRadius: 8, padding: '10px', color: '#fff', fontWeight: 700, fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                                                {merging ? <div style={{ width: 14, height: 14, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> : <CheckCircle size={14} />}
+                                                {merging ? 'Merging…' : 'Confirm'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div style={{ background: 'rgba(217,119,6,0.08)', border: '1px solid #d97706', borderRadius: 10, padding: 14, textAlign: 'center' }}>
+                                        <GitMerge size={20} style={{ color: '#d97706', marginBottom: 8 }} />
+                                        <div style={{ fontSize: 12, fontWeight: 700, color: '#d97706', marginBottom: 6 }}>
+                                            {mergeStep === 'selectSource' ? 'Select Source Table' : 'Select Destination Table'}
+                                        </div>
+                                        <div style={{ fontSize: 11, color: '#92400e' }}>
+                                            {mergeStep === 'selectSource' ? 'Select the 1st available table on the floor plan' : `1st table: ${mergeSource?.section} — now select the 2nd table`}
+                                        </div>
+                                        {mergeSource && (
+                                            <div style={{ marginTop: 10, background: '#d97706', color: '#000', borderRadius: 6, padding: '4px 10px', display: 'inline-block', fontWeight: 800, fontSize: 12 }}>{mergeSource.section}</div>
+                                        )}
+                                        <button onClick={cancelMerge} style={{ display: 'block', width: '100%', marginTop: 12, background: 'none', border: '1px solid #92400e', borderRadius: 8, padding: '8px', color: '#92400e', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
+                                    </div>
+                                )}
+                            </div>
+
+                            <div style={{ background: 'var(--bg-card)', borderRadius: 14, border: '1px solid var(--border)', padding: 14 }}>
+                                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.2, color: 'var(--text-muted)', marginBottom: 10 }}>New Order</div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                    <button onClick={() => toast('info', user?.role === 'waiter' ? 'Click a table to start a Dine-in order' : 'Only waiters can start dine-in orders.')}
+                                        style={{ background: '#15803d', border: 'none', borderRadius: 10, padding: '13px 14px', color: '#fff', fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', transition: 'filter 0.15s' }}>
+                                        <UtensilsCrossed size={17} /> Dine-in
+                                    </button>
+                                    <button onClick={() => toast('info', 'Takeaway — coming soon')}
+                                        style={{ background: '#c2410c', border: 'none', borderRadius: 10, padding: '13px 14px', color: '#fff', fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', transition: 'filter 0.15s' }}>
+                                        <ShoppingBag size={17} /> Take Away
+                                    </button>
+                                    <button onClick={() => toast('info', 'Delivery — coming soon')}
+                                        style={{ background: '#0369a1', border: 'none', borderRadius: 10, padding: '13px 14px', color: '#fff', fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', transition: 'filter 0.15s' }}>
+                                        <Truck size={17} /> Delivery
                                     </button>
                                 </div>
                             </div>
-                        ) : (
-                            /* Active selection mode */
-                            <div style={{ background: 'rgba(217,119,6,0.08)', border: '1px solid #d97706', borderRadius: 10, padding: 14, textAlign: 'center' }}>
-                                <GitMerge size={20} style={{ color: '#d97706', marginBottom: 8 }} />
-                                <div style={{ fontSize: 12, fontWeight: 700, color: '#d97706', marginBottom: 6 }}>
-                                    {mergeStep === 'selectSource' ? 'Select Source Table' : 'Select Destination Table'}
+
+                            <div style={{ background: 'var(--bg-card)', borderRadius: 14, border: '1px solid var(--border)', padding: 14 }}>
+                                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.2, color: 'var(--text-muted)', marginBottom: 10 }}>Other Actions</div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                    <button onClick={() => toast('info', 'Reservation Overview — coming soon')}
+                                        style={{ background: 'var(--surface-active)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px', color: 'var(--text-secondary)', fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                                        <CalendarDays size={16} /> Reservation Overview
+                                    </button>
+                                    <button onClick={() => toast('info', 'Print — coming soon')}
+                                        style={{ background: 'var(--surface-active)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px', color: 'var(--text-secondary)', fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                                        <Printer size={16} /> Print Reservation
+                                    </button>
                                 </div>
-                                <div style={{ fontSize: 11, color: '#92400e' }}>
-                                    {mergeStep === 'selectSource' ? 'Select the 1st available table on the floor plan' : `1st table: ${mergeSource?.section} — now select the 2nd table`}
-                                </div>
-                                {mergeSource && (
-                                    <div style={{ marginTop: 10, background: '#d97706', color: '#000', borderRadius: 6, padding: '4px 10px', display: 'inline-block', fontWeight: 800, fontSize: 12 }}>{mergeSource.section}</div>
-                                )}
-                                <button onClick={cancelMerge} style={{ display: 'block', width: '100%', marginTop: 12, background: 'none', border: '1px solid #92400e', borderRadius: 8, padding: '8px', color: '#92400e', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
                             </div>
-                        )}
-                    </div>
-
-                    {/* New Order */}
-                    <div style={{ background: 'var(--bg-card)', borderRadius: 14, border: '1px solid var(--border)', padding: 14 }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.2, color: 'var(--text-muted)', marginBottom: 10 }}>New Order</div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                            <button onClick={() => toast('info', 'Click a table to start a Dine-in order')}
-                                style={{ background: '#15803d', border: 'none', borderRadius: 10, padding: '13px 14px', color: '#fff', fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', transition: 'filter 0.15s' }}>
-                                <UtensilsCrossed size={17} /> Dine-in
-                            </button>
-                            <button onClick={() => toast('info', 'Takeaway — coming soon')}
-                                style={{ background: '#c2410c', border: 'none', borderRadius: 10, padding: '13px 14px', color: '#fff', fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', transition: 'filter 0.15s' }}>
-                                <ShoppingBag size={17} /> Take Away
-                            </button>
-                            <button onClick={() => toast('info', 'Delivery — coming soon')}
-                                style={{ background: '#0369a1', border: 'none', borderRadius: 10, padding: '13px 14px', color: '#fff', fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', transition: 'filter 0.15s' }}>
-                                <Truck size={17} /> Delivery
-                            </button>
-                        </div>
-                    </div>
-
-                    {/* Other Actions */}
-                    <div style={{ background: 'var(--bg-card)', borderRadius: 14, border: '1px solid var(--border)', padding: 14 }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.2, color: 'var(--text-muted)', marginBottom: 10 }}>Other Actions</div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                            <button onClick={() => toast('info', 'Reservation Overview — coming soon')}
-                                style={{ background: 'var(--surface-active)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px', color: 'var(--text-secondary)', fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
-                                <CalendarDays size={16} /> Reservation Overview
-                            </button>
-                            <button onClick={() => toast('info', 'Print — coming soon')}
-                                style={{ background: 'var(--surface-active)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px', color: 'var(--text-secondary)', fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
-                                <Printer size={16} /> Print Reservation
-                            </button>
-                        </div>
-                    </div>
-
-                    {user?.role === 'admin' && (
-                        <div style={{ background: 'var(--bg-card)', borderRadius: 14, border: '1px solid var(--border)', padding: 14 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-                                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.2, color: 'var(--text-muted)' }}>Admin Table Control</div>
-                                <button
-                                    onClick={openAddTableModal}
-                                    style={{ background: '#2563eb', border: 'none', borderRadius: 8, padding: '6px 8px', color: '#fff', display: 'flex', alignItems: 'center', cursor: 'pointer' }}
-                                >
-                                    <Plus size={14} />
-                                </button>
-                            </div>
-
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 260, overflowY: 'auto' }}>
-                                {tables.map((table) => (
-                                    <div key={table.id} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 10, background: 'var(--surface-active)' }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
-                                            <div>
-                                                <div style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>{table.section || `Table ${table.number}`}</div>
-                                            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>#{table.number} • {table.capacity} seats • {table.status}</div>
-                                        </div>
-                                        <div style={{ display: 'flex', gap: 6 }}>
-                                                <button
-                                                    onClick={() => beginTablePlacement(table)}
-                                                    style={{ background: 'none', border: '1px solid #2563eb', color: '#93c5fd', borderRadius: 8, padding: 6, cursor: 'pointer', display: 'flex' }}
-                                                    title="Place table on floor"
-                                                >
-                                                    <Plus size={13} />
-                                                </button>
-                                                <button
-                                                    onClick={() => openEditTableModal(table)}
-                                                    style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: 8, padding: 6, cursor: 'pointer', display: 'flex' }}
-                                                    title="Edit table"
-                                                >
-                                                    <Pencil size={13} />
-                                                </button>
-                                                <button
-                                                    onClick={() => deleteTable(table)}
-                                                    style={{ background: 'none', border: '1px solid rgba(239,68,68,0.35)', color: '#ef4444', borderRadius: 8, padding: 6, cursor: 'pointer', display: 'flex' }}
-                                                    title="Delete table"
-                                                >
-                                                    <Trash2 size={13} />
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
+                        </>
                     )}
+
                 </div>
             </div>
 
             {/* ── Bottom Status Bar ──────────────────────────────────────────── */}
-            <div style={{
+            <div className="floor-status-bar" style={{
                 marginTop: 10,
                 background: 'var(--bg-card)',
                 borderRadius: 12,
@@ -808,14 +1249,16 @@ export default function TablesPage() {
                         <span style={{ color: 'var(--text-muted)' }}>{label}</span>
                     </div>
                 ))}
-                <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-secondary)', fontWeight: 600 }}>
+                <div className="floor-status-pax" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-secondary)', fontWeight: 600 }}>
                     <Users size={13} />
                     PAX: <strong style={{ color: '#fff' }}>{totalPax}</strong>
                 </div>
             </div>
+            </div>
+            </div>
 
             {/* Order modal (disabled during merge mode) */}
-            {selectedTable && mergeStep === 'idle' && (
+            {selectedTable && mergeStep === 'idle' && user?.role === 'waiter' && (
                 <OrderModal
                     table={selectedTable}
                     onClose={() => { setSelectedTable(null); fetchTables(); }}
@@ -833,8 +1276,9 @@ export default function TablesPage() {
 
                         <form onSubmit={submitTableForm} className="flex flex-col gap-4">
                             <div>
-                                <label className="block text-sm text-muted mb-1">Table Number</label>
+                                <label className="block text-sm text-muted mb-1" htmlFor="table-number">Table Number</label>
                                 <input
+                                    id="table-number"
                                     required
                                     min={1}
                                     type="number"
@@ -845,8 +1289,9 @@ export default function TablesPage() {
                             </div>
 
                             <div>
-                                <label className="block text-sm text-muted mb-1">Section Name</label>
+                                <label className="block text-sm text-muted mb-1" htmlFor="table-section-name">Section Name</label>
                                 <input
+                                    id="table-section-name"
                                     required
                                     type="text"
                                     className="form-input"
@@ -857,8 +1302,9 @@ export default function TablesPage() {
                             </div>
 
                             <div>
-                                <label className="block text-sm text-muted mb-1">Capacity</label>
+                                <label className="block text-sm text-muted mb-1" htmlFor="table-capacity">Capacity</label>
                                 <input
+                                    id="table-capacity"
                                     required
                                     min={1}
                                     type="number"
@@ -869,8 +1315,8 @@ export default function TablesPage() {
                             </div>
 
                             <div>
-                                <label className="block text-sm text-muted mb-1">Status</label>
-                                <select className="form-select" value={tableForm.status} onChange={e => setTableForm({ ...tableForm, status: e.target.value })}>
+                                <label className="block text-sm text-muted mb-1" htmlFor="table-status">Status</label>
+                                <select id="table-status" className="form-select" value={tableForm.status} onChange={e => setTableForm({ ...tableForm, status: e.target.value })}>
                                     <option value="available">Available</option>
                                     <option value="reserved">Reserved</option>
                                     <option value="occupied">Occupied</option>
@@ -879,8 +1325,8 @@ export default function TablesPage() {
                             </div>
 
                             <div>
-                                <label className="block text-sm text-muted mb-1">Shape</label>
-                                <select className="form-select" value={tableForm.shape} onChange={e => setTableForm({ ...tableForm, shape: e.target.value })}>
+                                <label className="block text-sm text-muted mb-1" htmlFor="table-shape">Shape</label>
+                                <select id="table-shape" className="form-select" value={tableForm.shape} onChange={e => setTableForm({ ...tableForm, shape: e.target.value })}>
                                     <option value="rect">Rectangle</option>
                                     <option value="circle">Circle</option>
                                 </select>
@@ -893,6 +1339,7 @@ export default function TablesPage() {
                     </div>
                 </div>
             )}
+            </div>
 
             <style>{`
                 @keyframes spin { to { transform: rotate(360deg); } }

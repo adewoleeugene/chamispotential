@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { verifyToken } from '@/lib/auth';
+import { getRequestUser } from '@/lib/auth';
 
 export async function POST(req: NextRequest) {
-    const token = req.cookies.get('rms-token')?.value;
-    const user = token ? verifyToken(token) : null;
+    const user = await getRequestUser(req);
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const { tableId } = await req.json();

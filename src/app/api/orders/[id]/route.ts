@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { verifyToken } from '@/lib/auth';
+import { getRequestUser } from '@/lib/auth';
 import {
     reconcileInventoryForOrderEdit,
     restoreInventoryForOrder,
@@ -9,11 +9,6 @@ import {
 import { activateOrderForService, isOperationalOrderStatus } from '@/lib/orders';
 import { getTaxRateDecimal } from '@/lib/runtime-settings';
 
-function auth(req: NextRequest) {
-    const token = req.cookies.get('rms-token')?.value;
-    return token ? verifyToken(token) : null;
-}
-
 type OrderItemInput = {
     menuItemId: string;
     quantity: number;
@@ -21,7 +16,7 @@ type OrderItemInput = {
 };
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-    if (!auth(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!await getRequestUser(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const { id } = await params;
     const order = await prisma.order.findUnique({
         where: { id },
@@ -32,9 +27,26 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-    if (!auth(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const user = await getRequestUser(req);
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const { id } = await params;
     const data = await req.json();
+
+    const nextStatus = typeof data.status === 'string' ? data.status : null;
+    const isKitchenTransition = nextStatus === 'preparing' || nextStatus === 'ready';
+    const isWaiterAction = Boolean(data.items) || data.action === 'confirm_manual_payment' || nextStatus === 'served' || nextStatus === 'cancelled';
+
+    if (!['waiter', 'kitchen'].includes(user.role)) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    if (user.role === 'kitchen' && !isKitchenTransition) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    if (user.role === 'waiter' && !isWaiterAction) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
 
     if (data.items) {
         const updatedOrder = await prisma.$transaction(async (tx) => {
@@ -117,7 +129,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
                 return activateOrderForService(tx, id);
             }
 
-            const nextStatus = data.status;
             if (nextStatus === 'cancelled' && existingOrder.status !== 'cancelled' && isOperationalOrderStatus(existingOrder.status)) {
                 await restoreInventoryForOrder(
                     tx,

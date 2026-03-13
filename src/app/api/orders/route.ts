@@ -1,15 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { verifyToken } from '@/lib/auth';
+import { getRequestUser } from '@/lib/auth';
 import { createOrderWithItems } from '@/lib/orders';
 
-function auth(req: NextRequest) {
-    const token = req.cookies.get('rms-token')?.value;
-    return token ? verifyToken(token) : null;
-}
-
 export async function GET(req: NextRequest) {
-    if (!auth(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!await getRequestUser(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const url = new URL(req.url);
     const status = url.searchParams.get('status');
     const where = status ? (status.includes(',') ? { status: { in: status.split(',') } } : { status }) : {};
@@ -27,8 +22,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-    const user = auth(req);
+    const user = await getRequestUser(req);
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (user.role !== 'waiter') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     const { tableId, items, type, notes, customerName, customerPhone, discount, paymentMethod, paymentStatus, status, deferActivation } = await req.json();
 

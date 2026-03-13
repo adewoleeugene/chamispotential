@@ -2,6 +2,7 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
+import { getDefaultRouteForRole } from '@/lib/roleRoutes';
 
 export default function HomePage() {
   const { user, loading } = useAuth();
@@ -10,7 +11,7 @@ export default function HomePage() {
   useEffect(() => {
     if (!loading) {
       if (user) {
-        router.replace('/dashboard');
+        router.replace(user.mustChangePassword ? '/change-password' : getDefaultRouteForRole(user.role));
       } else {
         router.replace('/login');
       }
@@ -18,8 +19,12 @@ export default function HomePage() {
   }, [user, loading, router]);
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
-      <div className="loading-spinner" />
+    <div className="fullscreen-shell">
+      <div className="fullscreen-panel">
+        <span className="fullscreen-kicker">Initializing RMS</span>
+        <div className="loading-spinner" />
+        <p className="fullscreen-copy">Routing you to the right station.</p>
+      </div>
     </div>
   );
 }

@@ -1,14 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { verifyToken } from '@/lib/auth';
+import { getRequestUser } from '@/lib/auth';
 import { SETTINGS_DEFAULTS, normaliseSettings } from '@/lib/settings';
 
-function auth(req: NextRequest) {
-  const token = req.cookies.get('rms-token')?.value;
-  return token ? verifyToken(token) : null;
-}
-
-export async function GET(req: NextRequest) {
+export async function GET() {
   const rows = await prisma.settings.findMany({
     where: { key: { in: Object.keys(SETTINGS_DEFAULTS) } },
   });
@@ -17,7 +12,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
-  const user = auth(req);
+  const user = await getRequestUser(req);
   if (!user || user.role !== 'admin') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }

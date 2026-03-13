@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { verifyToken } from '@/lib/auth';
+import { getRequestUser } from '@/lib/auth';
 import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays } from 'date-fns';
+import { POPULARITY_LOOKBACK_DAYS, summarizeMenuPopularity } from '@/lib/menu-popularity';
 
 export async function GET(req: NextRequest) {
-    const token = req.cookies.get('rms-token')?.value;
-    const user = token ? verifyToken(token) : null;
-    if (!token || !user) {
+    const user = await getRequestUser(req);
+    if (!user) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -34,8 +34,7 @@ export async function GET(req: NextRequest) {
         monthRevenue,
         totalCustomers,
         tableStats,
-        topItems,
-        bottomItems,
+        recentOrderLines,
         allMenuItems,
         recentOrders,
         lowInventory,
@@ -55,20 +54,20 @@ export async function GET(req: NextRequest) {
         prisma.order.aggregate({ where: { createdAt: { gte: monthStart, lte: monthEnd }, status: { not: 'cancelled' } }, _sum: { total: true } }),
         prisma.order.count({ where: { createdAt: { gte: monthStart, lte: monthEnd } } }),
         prisma.table.groupBy({ by: ['status'], _count: true }),
-        prisma.orderItem.groupBy({
-            by: ['menuItemId'],
-            _sum: { quantity: true },
-            orderBy: { _sum: { quantity: 'desc' } },
-            take: 5,
-        }),
-        prisma.orderItem.groupBy({
-            by: ['menuItemId'],
-            _sum: { quantity: true },
-            orderBy: { _sum: { quantity: 'asc' } },
-            take: 5,
+        prisma.orderItem.findMany({
+            where: {
+                order: {
+                    status: { not: 'cancelled' },
+                    createdAt: { gte: subDays(now, POPULARITY_LOOKBACK_DAYS) },
+                },
+            },
+            select: {
+                menuItemId: true,
+                quantity: true,
+            },
         }),
         prisma.menuItem.findMany({
-            select: { id: true, name: true, price: true, isPopular: true, category: { select: { name: true } } },
+            select: { id: true, name: true, price: true, category: { select: { name: true } } },
         }),
         prisma.order.findMany({
             where: { ...waiterWhere },
@@ -87,7 +86,7 @@ export async function GET(req: NextRequest) {
                 return prisma.order.aggregate({
                     where: { createdAt: { gte: startOfDay(day), lte: endOfDay(day) }, status: { not: 'cancelled' } },
                     _sum: { total: true },
-                }).then((r: any) => ({ date: day.toISOString().split('T')[0], revenue: r._sum.total || 0 }));
+                }).then((r) => ({ date: day.toISOString().split('T')[0], revenue: r._sum.total || 0 }));
             })
         ),
         Promise.all(
@@ -97,7 +96,7 @@ export async function GET(req: NextRequest) {
                     where: { createdAt: { gte: startOfDay(day), lte: endOfDay(day) }, status: { not: 'cancelled' } },
                     _sum: { total: true },
                     _count: true,
-                }).then((r: any) => ({
+                }).then((r) => ({
                     date: day.toISOString().split('T')[0],
                     revenue: r._sum.total || 0,
                     orders: r._count || 0,
@@ -127,21 +126,7 @@ export async function GET(req: NextRequest) {
         }),
     ]);
 
-    // Get top items with names
-    const topItemsWithNames = await Promise.all(
-        topItems.map(async (item: any) => {
-            const menuItem = await prisma.menuItem.findUnique({ where: { id: item.menuItemId } });
-            return { name: menuItem?.name || 'Unknown', quantity: item._sum.quantity || 0 };
-        })
-    );
-
-    const quantityByMenuItemId = new Map<string, number>();
-    for (const item of topItems) {
-        quantityByMenuItemId.set(item.menuItemId, item._sum.quantity || 0);
-    }
-    for (const item of bottomItems) {
-        quantityByMenuItemId.set(item.menuItemId, item._sum.quantity || 0);
-    }
+    const { quantityByMenuItemId, popularIds } = summarizeMenuPopularity(recentOrderLines);
 
     const itemPerformance = allMenuItems.map((item) => ({
         id: item.id,
@@ -149,8 +134,13 @@ export async function GET(req: NextRequest) {
         category: item.category?.name || 'Uncategorised',
         quantity: quantityByMenuItemId.get(item.id) || 0,
         estimatedRevenue: (quantityByMenuItemId.get(item.id) || 0) * item.price,
-        isPopular: item.isPopular,
+        isPopular: popularIds.has(item.id),
     }));
+
+    const topItemsWithNames = [...itemPerformance]
+        .sort((a, b) => b.quantity - a.quantity)
+        .slice(0, 5)
+        .map((item) => ({ name: item.name, quantity: item.quantity }));
 
     const mostOrderedItem = [...itemPerformance].sort((a, b) => b.quantity - a.quantity)[0] || null;
     const leastOrderedItem = [...itemPerformance].sort((a, b) => a.quantity - b.quantity)[0] || null;
@@ -185,10 +175,10 @@ export async function GET(req: NextRequest) {
             : null,
     ].filter(Boolean);
 
-    const tableStatusMap = tableStats.reduce((acc: any, t: any) => {
+    const tableStatusMap = tableStats.reduce<Record<string, number>>((acc, t) => {
         acc[t.status] = (t._count as number);
         return acc;
-    }, {} as Record<string, number>);
+    }, {});
 
     return NextResponse.json({
         orders: {
