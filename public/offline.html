@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Offline — RMS</title>
+    <style>
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        background: #07131a;
+        color: #f6efe5;
+        min-height: 100dvh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 1.5rem;
+        padding: 2rem;
+        text-align: center;
+      }
+
+      .icon {
+        width: 72px;
+        height: 72px;
+        background: linear-gradient(135deg, #13364a, #1c5068);
+        border-radius: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 2rem;
+        font-weight: 700;
+        color: #f6efe5;
+        letter-spacing: -1px;
+      }
+
+      h1 {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: #f6efe5;
+      }
+
+      p {
+        font-size: 0.95rem;
+        color: #8aadbe;
+        max-width: 320px;
+        line-height: 1.6;
+      }
+
+      button {
+        margin-top: 0.5rem;
+        padding: 0.75rem 2rem;
+        background: linear-gradient(135deg, #1c5068, #2a7a9e);
+        color: #f6efe5;
+        border: none;
+        border-radius: 10px;
+        font-size: 0.9rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: opacity 0.2s;
+      }
+
+      button:hover { opacity: 0.85; }
+
+      .divider {
+        width: 40px;
+        height: 2px;
+        background: linear-gradient(90deg, transparent, #1c5068, transparent);
+        border-radius: 2px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="icon">R</div>
+    <div class="divider"></div>
+    <h1>You're offline</h1>
+    <p>RMS can't reach the server right now. Check your connection and try again.</p>
+    <button onclick="window.location.reload()">Try again</button>
+  </body>
+</html>

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">RMS maskable app icon</title>
+  <desc id="desc">Restaurant Management System maskable application icon.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#07131a" />
+      <stop offset="100%" stop-color="#13364a" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)" />
+  <circle cx="256" cy="256" r="182" fill="rgba(246,239,229,0.08)" />
+  <path d="M154 362V150h106.6c34 0 59.5 7.1 76.6 21.4 17.5 14.3 26.2 34.2 26.2 59.6 0 26.8-9.3 48-27.9 63.5-18 14.8-44.3 22.2-79 22.2H212V362H154Zm58.5-92.7H255c16.5 0 29-3.3 37.5-9.9 8.7-6.6 13-16 13-28.3 0-24.7-16.5-37-49.6-37h-43.4v75.2Zm92.5 92.7-48.9-72.3h63.2l47.8 72.3H305Z" fill="#f6efe5" />
+</svg>
