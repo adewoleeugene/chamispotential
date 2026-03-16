@@ -31,6 +31,7 @@ export default function OrderModal({ table, onClose }: { table: any, onClose: ()
     const [manualPaymentMethod, setManualPaymentMethod] = useState<ManualPaymentMethod>('cash');
     const [manualPaymentFlow, setManualPaymentFlow] = useState<ManualPaymentFlow>('settle_now');
     const [submitting, setSubmitting] = useState(false);
+    const [paymentConfirmData, setPaymentConfirmData] = useState<{ id: string, method: ManualPaymentMethod, totalAmount: number } | null>(null);
 
     useEffect(() => {
         Promise.all([
@@ -128,15 +129,19 @@ export default function OrderModal({ table, onClose }: { table: any, onClose: ()
                 throw new Error(editingOrderId ? 'Failed to update order' : 'Failed to create order');
             }
 
+            if (manualPaymentFlow === 'settle_now' && !editingOrderId) {
+                const createdOrder = await res.json();
+                setPaymentConfirmData({ id: createdOrder.id, method: manualPaymentMethod, totalAmount: total });
+                return; // don't close until confirmed
+            }
+
             toast(
                 'success',
                 editingOrderId
                     ? 'Order updated successfully'
                     : paymentChannel === 'monime'
                         ? 'Checkout created. Waiting for payment confirmation.'
-                        : manualPaymentFlow === 'settle_now'
-                            ? `${getManualPaymentMethodLabel(manualPaymentMethod)} payment recorded and order sent to kitchen.`
-                            : 'Open tab saved. Settle it later from this checkout panel.'
+                        : 'Open tab saved. Settle it later from this checkout panel.'
             );
             setEditingOrderId(null);
             setPaymentChannel('manual');
@@ -164,11 +169,14 @@ export default function OrderModal({ table, onClose }: { table: any, onClose: ()
         }
     };
 
-    const confirmManualPayment = async (orderId: string) => {
+    const confirmManualPayment = async (orderId: string, methodOverride?: string) => {
         const existingOrder = table.orders?.find((order: any) => order.id === orderId);
-        const storedMethod = isManualPaymentMethod(existingOrder?.paymentMethod)
-            ? existingOrder.paymentMethod
-            : 'cash';
+        let storedMethod = methodOverride;
+        if (!storedMethod) {
+            storedMethod = isManualPaymentMethod(existingOrder?.paymentMethod)
+                ? existingOrder.paymentMethod
+                : 'cash';
+        }
         const res = await fetch(`/api/orders/${orderId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
@@ -177,6 +185,7 @@ export default function OrderModal({ table, onClose }: { table: any, onClose: ()
 
         if (res.ok) {
             toast('success', `${getManualPaymentMethodLabel(storedMethod)} payment confirmed and order sent to kitchen`);
+            setPaymentConfirmData(null);
             onClose();
         } else {
             toast('error', 'Failed to confirm payment');
@@ -385,6 +394,28 @@ export default function OrderModal({ table, onClose }: { table: any, onClose: ()
                     </>
                 )}
             </div>
+
+            {paymentConfirmData && (
+                <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }}>
+                    <div style={{ background: 'var(--bg-card)', padding: 32, borderRadius: 'var(--radius-lg)', width: 400, textAlign: 'center', border: '1px solid var(--border)' }}>
+                        <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'rgba(56,189,248,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', color: '#38bdf8' }}>
+                            <CreditCard size={32} />
+                        </div>
+                        <h3 style={{ fontSize: 20, fontWeight: 'bold', marginBottom: 8 }}>Confirm {getManualPaymentMethodLabel(paymentConfirmData.method)} Payment</h3>
+                        <p style={{ color: 'var(--text-secondary)', marginBottom: 24, fontSize: 14 }}>
+                            Has the {getManualPaymentMethodLabel(paymentConfirmData.method).toLowerCase()} payment of {formatCurrency(paymentConfirmData.totalAmount, settings.currencySymbol)} been received? Confirming will send the order to the kitchen.
+                        </p>
+                        <div style={{ display: 'flex', gap: 12 }}>
+                            <button className="btn w-full" onClick={() => { setPaymentConfirmData(null); onClose(); }} style={{ padding: 12, justifyContent: 'center', background: 'var(--surface-active)' }}>
+                                Cancel & Keep in Draft
+                            </button>
+                            <button className="btn btn-primary w-full" onClick={() => confirmManualPayment(paymentConfirmData.id, paymentConfirmData.method)} style={{ padding: 12, justifyContent: 'center' }}>
+                                Confirm Paid
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
