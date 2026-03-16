@@ -70,28 +70,6 @@ export default function PaymentFlowSelector({
 
       {paymentChannel === 'manual' ? (
         <>
-          <div className="payment-intent-grid">
-          <button
-            type="button"
-            className={`payment-intent-card ${manualPaymentFlow === 'settle_now' ? 'active' : ''}`}
-            onClick={() => onManualPaymentFlowChange('settle_now')}
-          >
-            <span className="payment-intent-eyebrow">Recommended</span>
-            <strong>Collect Now</strong>
-            <span>Mark the order paid and send it straight to the kitchen.</span>
-          </button>
-
-          <button
-            type="button"
-            className={`payment-intent-card ${manualPaymentFlow === 'open_tab' ? 'active' : ''}`}
-            onClick={() => onManualPaymentFlowChange('open_tab')}
-          >
-            <span className="payment-intent-eyebrow">Fallback</span>
-            <strong>Open Tab</strong>
-            <span>Save an unpaid ticket and settle it later from the same checkout panel.</span>
-          </button>
-        </div>
-
           <div className="manual-method-grid">
             {manualPaymentOptions.map((option) => {
               const Icon = option.icon;
@@ -114,9 +92,7 @@ export default function PaymentFlowSelector({
           </div>
 
           <div className="payment-flow-note">
-            {manualPaymentFlow === 'settle_now'
-              ? `${getManualPaymentMethodLabel(manualPaymentMethod)} will be recorded immediately and the kitchen ticket will start right away.`
-              : `This tab stays unpaid until someone settles it, which keeps the kitchen paused until confirmation.`}
+            Record the payment method and confirm. Keep it in draft if not paid yet.
           </div>
         </>
       ) : (
