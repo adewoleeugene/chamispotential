@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { getRequestUser } from '@/lib/auth';
 import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays } from 'date-fns';
 import { POPULARITY_LOOKBACK_DAYS, summarizeMenuPopularity } from '@/lib/menu-popularity';
+import { getRecognizedRevenueWhere } from '@/lib/revenue';
 
 export async function GET(req: NextRequest) {
     const user = await getRequestUser(req);
@@ -32,6 +33,7 @@ export async function GET(req: NextRequest) {
         readyOrders,
         todayRevenue,
         monthRevenue,
+        monthRevenueOrders,
         totalCustomers,
         tableStats,
         recentOrderLines,
@@ -50,8 +52,9 @@ export async function GET(req: NextRequest) {
         prisma.order.count({ where: { status: 'pending' } }),
         prisma.order.count({ where: { ...waiterWhere, status: { in: isWaiter ? ['pending', 'preparing'] : ['pending', 'preparing', 'ready'] } } }),
         prisma.order.count({ where: { ...waiterWhere, status: 'ready' } }),
-        prisma.order.aggregate({ where: { createdAt: { gte: todayStart, lte: todayEnd }, status: { not: 'cancelled' } }, _sum: { total: true } }),
-        prisma.order.aggregate({ where: { createdAt: { gte: monthStart, lte: monthEnd }, status: { not: 'cancelled' } }, _sum: { total: true } }),
+        prisma.order.aggregate({ where: getRecognizedRevenueWhere({ createdAt: { gte: todayStart, lte: todayEnd } }), _sum: { total: true } }),
+        prisma.order.aggregate({ where: getRecognizedRevenueWhere({ createdAt: { gte: monthStart, lte: monthEnd } }), _sum: { total: true } }),
+        prisma.order.count({ where: getRecognizedRevenueWhere({ createdAt: { gte: monthStart, lte: monthEnd } }) }),
         prisma.order.count({ where: { createdAt: { gte: monthStart, lte: monthEnd } } }),
         prisma.table.groupBy({ by: ['status'], _count: true }),
         prisma.orderItem.findMany({
@@ -84,7 +87,7 @@ export async function GET(req: NextRequest) {
             Array.from({ length: 7 }, (_, i) => {
                 const day = subDays(now, 6 - i);
                 return prisma.order.aggregate({
-                    where: { createdAt: { gte: startOfDay(day), lte: endOfDay(day) }, status: { not: 'cancelled' } },
+                    where: getRecognizedRevenueWhere({ createdAt: { gte: startOfDay(day), lte: endOfDay(day) } }),
                     _sum: { total: true },
                 }).then((r) => ({ date: day.toISOString().split('T')[0], revenue: r._sum.total || 0 }));
             })
@@ -93,7 +96,7 @@ export async function GET(req: NextRequest) {
             Array.from({ length: 30 }, (_, i) => {
                 const day = subDays(now, 29 - i);
                 return prisma.order.aggregate({
-                    where: { createdAt: { gte: startOfDay(day), lte: endOfDay(day) }, status: { not: 'cancelled' } },
+                    where: getRecognizedRevenueWhere({ createdAt: { gte: startOfDay(day), lte: endOfDay(day) } }),
                     _sum: { total: true },
                     _count: true,
                 }).then((r) => ({
@@ -105,7 +108,7 @@ export async function GET(req: NextRequest) {
         ),
         prisma.order.groupBy({
             by: ['type'],
-            where: { createdAt: { gte: monthStart, lte: monthEnd }, status: { not: 'cancelled' } },
+            where: getRecognizedRevenueWhere({ createdAt: { gte: monthStart, lte: monthEnd } }),
             _count: true,
             _sum: { total: true },
         }),
@@ -146,7 +149,7 @@ export async function GET(req: NextRequest) {
     const leastOrderedItem = [...itemPerformance].sort((a, b) => a.quantity - b.quantity)[0] || null;
     const peakRevenueDay = [...monthDailyRevenue].sort((a, b) => b.revenue - a.revenue)[0] || null;
     const slowMovingItems = [...itemPerformance].sort((a, b) => a.quantity - b.quantity).slice(0, 5);
-    const avgTicket = monthOrders > 0 ? (monthRevenue._sum.total || 0) / monthOrders : 0;
+    const avgTicket = monthRevenueOrders > 0 ? (monthRevenue._sum.total || 0) / monthRevenueOrders : 0;
 
     const decisionInsights = [
         peakRevenueDay

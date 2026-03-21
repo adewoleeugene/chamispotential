@@ -11,6 +11,7 @@ import {
 } from 'date-fns';
 import { prisma } from '@/lib/prisma';
 import { getRequestUser } from '@/lib/auth';
+import { isRecognizedRevenueOrder } from '@/lib/revenue';
 
 type ReportRange = 'day' | 'week' | 'month';
 
@@ -102,8 +103,9 @@ export async function GET(req: NextRequest) {
         }),
     ]);
 
-    const totalRevenue = orders.reduce((sum, order) => sum + (order.total || 0), 0);
-    const avgTicket = orders.length > 0 ? totalRevenue / orders.length : 0;
+    const revenueOrders = orders.filter((order) => isRecognizedRevenueOrder(order));
+    const totalRevenue = revenueOrders.reduce((sum, order) => sum + (order.total || 0), 0);
+    const avgTicket = revenueOrders.length > 0 ? totalRevenue / revenueOrders.length : 0;
     const dineInOrders = orders.filter((order) => order.type === 'dine-in').length;
     const takeoutOrders = orders.length - dineInOrders;
 
@@ -118,7 +120,9 @@ export async function GET(req: NextRequest) {
             : format(order.createdAt, 'yyyy-MM-dd');
         const bucket = bucketMap.get(bucketKey);
         if (!bucket) continue;
-        bucket.revenue += order.total || 0;
+        if (isRecognizedRevenueOrder(order)) {
+            bucket.revenue += order.total || 0;
+        }
         bucket.orders += 1;
     }
 
@@ -163,8 +167,8 @@ export async function GET(req: NextRequest) {
     const weakestSeller = slowMovingItems[0] || null;
 
     const orderTypeMix = [
-        { type: 'dine-in', count: dineInOrders, revenue: orders.filter((order) => order.type === 'dine-in').reduce((sum, order) => sum + (order.total || 0), 0) },
-        { type: 'takeout + delivery', count: takeoutOrders, revenue: orders.filter((order) => order.type !== 'dine-in').reduce((sum, order) => sum + (order.total || 0), 0) },
+        { type: 'dine-in', count: dineInOrders, revenue: orders.filter((order) => order.type === 'dine-in' && isRecognizedRevenueOrder(order)).reduce((sum, order) => sum + (order.total || 0), 0) },
+        { type: 'takeout + delivery', count: takeoutOrders, revenue: orders.filter((order) => order.type !== 'dine-in' && isRecognizedRevenueOrder(order)).reduce((sum, order) => sum + (order.total || 0), 0) },
     ].filter((entry) => entry.count > 0);
 
     const insights = [

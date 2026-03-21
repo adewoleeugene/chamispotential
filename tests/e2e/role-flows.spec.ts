@@ -68,19 +68,21 @@ test.describe('admin and waiter flows', () => {
 
         await expect(page).toHaveURL(/\/tables$/);
         await expect(page.getByRole('link', { name: /dashboard/i })).toBeVisible();
-        await expect(page.getByRole('link', { name: /orders/i })).toBeVisible();
+        await expect(page.getByRole('link', { name: /orders/i })).toHaveCount(0);
         await expect(page.getByRole('link', { name: /tables/i })).toBeVisible();
         await expect(page.getByRole('link', { name: /inventory/i })).toHaveCount(0);
         await expect(page.getByRole('link', { name: /reports/i })).toHaveCount(0);
         await expect(page.getByRole('link', { name: /settings/i })).toHaveCount(0);
         await expect(page.getByRole('link', { name: /staff/i })).toHaveCount(0);
+
+        await page.goto('/orders');
+        await expect(page).toHaveURL(/\/tables$/);
     });
 
-    test('waiter can create a dine-in order from the orders workspace', async ({ page }) => {
+    test('waiter can create a dine-in order from the tables workspace', async ({ page }) => {
         await loginAs(page, 'waiter');
-        await page.getByRole('link', { name: /orders/i }).click();
-
-        await expect(page).toHaveURL(/\/orders$/);
+        await page.getByText('Waterloo', { exact: true }).click();
+        await expect(page.getByRole('heading', { name: /order for waterloo/i })).toBeVisible();
 
         const beforeOrders = await page.evaluate(async () => {
             const response = await fetch('/api/orders?status=pending,preparing,ready,draft,payment_pending_confirmation');
@@ -90,15 +92,8 @@ test.describe('admin and waiter flows', () => {
             ? beforeOrders.reduce((max: number, order: any) => Math.max(max, order.orderNumber || 0), 0)
             : 0;
 
-        const tableSelect = page.getByLabel('Service Table');
-        const tableOption = tableSelect.locator('option:not([value=""])').first();
-        const tableId = await tableOption.getAttribute('value');
-
-        expect(tableId).toBeTruthy();
-
-        await tableSelect.selectOption(tableId!);
         await page.locator('.menu-item-card').first().click();
-        await expect(page.getByText('Current Order')).toBeVisible();
+        await expect(page.getByRole('heading', { name: /cart/i })).toBeVisible();
 
         const submitResponse = page.waitForResponse((response) =>
             response.url().includes('/api/orders') && response.request().method() === 'POST' && response.status() === 201
@@ -107,9 +102,11 @@ test.describe('admin and waiter flows', () => {
         const createdOrderResponse = await submitResponse;
         const createdOrder = await createdOrderResponse.json();
 
+        await page.getByRole('button', { name: /confirm paid/i }).click();
+
         expect(createdOrder.orderNumber).toBeGreaterThan(beforeMaxOrderNumber);
-        expect(createdOrder.status).toBe('pending');
-        expect(createdOrder.tableId).toBe(tableId);
+        expect(createdOrder.status).toBe('draft');
+        expect(createdOrder.table?.number).toBe(3);
 
         const persistedOrder = await page.evaluate(async (orderId) => {
             const response = await fetch('/api/orders?status=pending,preparing,ready,draft,payment_pending_confirmation');
@@ -118,5 +115,6 @@ test.describe('admin and waiter flows', () => {
         }, createdOrder.id);
 
         expect(persistedOrder).toBeTruthy();
+        expect(persistedOrder.status).toBe('pending');
     });
 });

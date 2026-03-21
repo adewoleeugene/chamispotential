@@ -11,7 +11,6 @@ import { formatCurrency } from '@/lib/currency';
 import PaymentFlowSelector from '@/components/PaymentFlowSelector';
 import { getDefaultRouteForRole } from '@/lib/roleRoutes';
 import {
-    getManualPaymentMethodLabel,
     getOrderPaymentConfig,
     isManualPaymentMethod,
     type ManualPaymentFlow,
@@ -19,7 +18,6 @@ import {
     type PaymentChannel,
 } from '@/lib/payment-flow';
 
-const ensureArray = <T,>(value: unknown): T[] => Array.isArray(value) ? value as T[] : [];
 type ManagerRange = 'day' | 'week' | 'month';
 
 export default function OrdersPage() {
@@ -47,61 +45,39 @@ export default function OrdersPage() {
     const [manualPaymentMethod, setManualPaymentMethod] = useState<ManualPaymentMethod>('cash');
     const [manualPaymentFlow, setManualPaymentFlow] = useState<ManualPaymentFlow>('settle_now');
     const [submitting, setSubmitting] = useState(false);
+    const [confirmingPayment, setConfirmingPayment] = useState(false);
     const [paymentConfirmData, setPaymentConfirmData] = useState<{ id: string, method: ManualPaymentMethod, totalAmount: number } | null>(null);
 
     useEffect(() => {
         if (authLoading || !user) return;
 
-        if (user.role === 'manager') {
-            setLoading(true);
-            fetch(`/api/reports?range=${managerRange}`)
-                .then(r => r.json())
-                .then((reportData) => {
-                    setManagerData(reportData);
-                    setLoading(false);
-                })
-                .catch(() => {
-                    setManagerData(null);
-                    setLoading(false);
-                    toast('error', 'Failed to load manager order analytics');
-                });
+        if (user.role !== 'manager') {
+            router.replace(getDefaultRouteForRole(user.role));
             return;
         }
 
-        if (user.role !== 'waiter') return;
+        setLoading(true);
+        fetch(`/api/reports?range=${managerRange}`)
+            .then(r => r.json())
+            .then((reportData) => {
+                setManagerData(reportData);
+                setLoading(false);
 
-        Promise.all([
-            fetch('/api/categories').then(r => r.json()),
-            fetch('/api/menu').then(r => r.json()),
-            fetch('/api/tables').then(r => r.json()),
-            fetch('/api/orders').then(r => r.json()),
-        ]).then(([cats, items, tbls, orderData]) => {
-            setCategories(ensureArray(cats));
-            setMenuItems(ensureArray(items));
-            setTables(ensureArray(tbls).filter((t: any) => t.status !== 'cleaning')); // Allow available, reserved, and occupied
-            setOrders(ensureArray(orderData));
-            setLoading(false);
-
-            // Pre-select table if passed in URL
-            if (typeof window !== 'undefined') {
-                const urlParams = new URL(window.location.href).searchParams;
-                const tableIdFromUrl = urlParams.get('tableId');
-                if (tableIdFromUrl) {
-                    setSelectedTable(tableIdFromUrl);
-                }
-            }
-        }).catch(() => {
-            setCategories([]);
-            setMenuItems([]);
-            setTables([]);
-            setOrders([]);
-            setLoading(false);
-            toast('error', 'Failed to load order data');
-        });
-    }, [authLoading, managerRange, toast, user]);
+                // Reset waiter-specific state when a manager lands here after a role switch.
+                setCategories([]);
+                setMenuItems([]);
+                setTables([]);
+                setOrders([]);
+            })
+            .catch(() => {
+                setManagerData(null);
+                setLoading(false);
+                toast('error', 'Failed to load manager order analytics');
+            });
+    }, [authLoading, managerRange, router, toast, user]);
 
     useEffect(() => {
-        if (!authLoading && user && !['waiter', 'manager'].includes(user.role)) {
+        if (!authLoading && user && user.role !== 'manager') {
             router.replace(getDefaultRouteForRole(user.role));
         }
     }, [authLoading, router, user]);
@@ -152,21 +128,30 @@ export default function OrdersPage() {
             storedMethod = isManualPaymentMethod(orderObj?.paymentMethod) ? orderObj?.paymentMethod : 'cash';
         }
 
-        const res = await fetch(`/api/orders/${orderId}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'confirm_manual_payment', paymentMethod: storedMethod })
-        });
+        setConfirmingPayment(true);
+        try {
+            const res = await fetch(`/api/orders/${orderId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'confirm_manual_payment', paymentMethod: storedMethod })
+            });
 
-        if (res.ok) {
-            toast('success', `${getManualPaymentMethodLabel(storedMethod)} payment confirmed and order sent to kitchen`);
+            const data = await res.json().catch(() => null);
+
+            if (!res.ok) {
+                throw new Error(data?.error || 'Failed to confirm payment');
+            }
+
+            toast('success', 'Cash received confirmed and order sent to kitchen');
             setPaymentConfirmData(null);
             await refreshOrders();
             const tablesRes = await fetch('/api/tables');
             const tablesData = await tablesRes.json();
             setTables(tablesData.filter((t: any) => t.status !== 'cleaning'));
-        } else {
-            toast('error', 'Failed to confirm payment');
+        } catch (error) {
+            toast('error', error instanceof Error ? error.message : 'Failed to confirm payment');
+        } finally {
+            setConfirmingPayment(false);
         }
     };
 
@@ -537,7 +522,7 @@ export default function OrdersPage() {
                                             </div>
                                             {order.status === 'draft' ? (
                                                 <button className="btn btn-success w-full" onClick={() => confirmManualPayment(order.id, storedMethod)} style={{ justifyContent: 'center', padding: 10 }}>
-                                                    Settle {getManualPaymentMethodLabel(storedMethod)} & Send
+                                                    Confirm Cash Received & Send
                                                 </button>
                                             ) : (
                                                 <div style={{ fontSize: 12, color: '#38bdf8' }}>Waiting for Monime confirmation</div>
@@ -575,7 +560,7 @@ export default function OrdersPage() {
                         </div>
 
                         <button className="btn btn-primary w-full" onClick={submitOrder} disabled={cart.length === 0 || submitting} style={{ padding: '12px', justifyContent: 'center', fontSize: 15 }}>
-                            <CreditCard size={18} /> {submitting ? 'Processing...' : paymentChannel === 'monime' ? 'Pay with Monime' : manualPaymentFlow === 'settle_now' ? `Collect ${getManualPaymentMethodLabel(manualPaymentMethod)} & Send to Kitchen` : 'Save Open Tab'}
+                            <CreditCard size={18} /> {submitting ? 'Processing...' : paymentChannel === 'monime' ? 'Pay with Monime' : manualPaymentFlow === 'settle_now' ? 'Confirm Cash Received' : 'Save Open Tab'}
                         </button>
                     </div>
                 </div>
@@ -587,16 +572,16 @@ export default function OrdersPage() {
                         <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'rgba(56,189,248,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', color: '#38bdf8' }}>
                             <CreditCard size={32} />
                         </div>
-                        <h3 style={{ fontSize: 20, fontWeight: 'bold', marginBottom: 8 }}>Confirm {getManualPaymentMethodLabel(paymentConfirmData.method)} Payment</h3>
+                        <h3 style={{ fontSize: 20, fontWeight: 'bold', marginBottom: 8 }}>Confirm Cash Received</h3>
                         <p style={{ color: 'var(--text-secondary)', marginBottom: 24, fontSize: 14 }}>
-                            Has the {getManualPaymentMethodLabel(paymentConfirmData.method).toLowerCase()} payment of {formatCurrency(paymentConfirmData.totalAmount, settings.currencySymbol)} been received? Confirming will send the order to the kitchen.
+                            Has the waiter received {formatCurrency(paymentConfirmData.totalAmount, settings.currencySymbol)} in cash? Confirming will send the order to the kitchen.
                         </p>
                         <div style={{ display: 'flex', gap: 12 }}>
-                            <button className="btn w-full" onClick={() => { setPaymentConfirmData(null); }} style={{ padding: 12, justifyContent: 'center', background: 'var(--surface-active)' }}>
+                            <button className="btn btn-secondary w-full" type="button" disabled={confirmingPayment} onClick={() => { setPaymentConfirmData(null); }} style={{ padding: 12, justifyContent: 'center' }}>
                                 Cancel & Keep in Draft
                             </button>
-                            <button className="btn btn-primary w-full" onClick={() => confirmManualPayment(paymentConfirmData.id, paymentConfirmData.method)} style={{ padding: 12, justifyContent: 'center' }}>
-                                Confirm Paid
+                            <button className="btn btn-primary w-full" type="button" disabled={confirmingPayment} onClick={() => confirmManualPayment(paymentConfirmData.id, paymentConfirmData.method)} style={{ padding: 12, justifyContent: 'center' }}>
+                                {confirmingPayment ? 'Confirming...' : 'Confirm Cash Received'}
                             </button>
                         </div>
                     </div>
