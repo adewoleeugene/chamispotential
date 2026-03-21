@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { endOfDay, endOfMonth, endOfWeek, startOfDay, startOfMonth, startOfWeek, subDays } from 'date-fns';
 import { prisma } from '@/lib/prisma';
 import { getRequestUser } from '@/lib/auth';
+import { isRecognizedRevenueOrder } from '@/lib/revenue';
 
 type AnalyticsRange = 'day' | 'week' | 'month';
 
@@ -121,7 +122,9 @@ export async function GET(req: NextRequest) {
             activeOrders: 0,
         };
 
-        current.revenue += order.total || 0;
+        if (isRecognizedRevenueOrder(order)) {
+            current.revenue += order.total || 0;
+        }
         current.ordersCount += 1;
         current.lastOrderAt = order.createdAt.toISOString();
         current.dineInOrders += order.type === 'dine-in' ? 1 : 0;
@@ -134,7 +137,7 @@ export async function GET(req: NextRequest) {
 
     const previousRevenueByTable = previousOrders.reduce<Record<string, number>>((acc, order) => {
         if (!order.tableId) return acc;
-        acc[order.tableId] = (acc[order.tableId] || 0) + (order.total || 0);
+        acc[order.tableId] = (acc[order.tableId] || 0) + (isRecognizedRevenueOrder(order) ? (order.total || 0) : 0);
         return acc;
     }, {});
 
@@ -159,7 +162,8 @@ export async function GET(req: NextRequest) {
         return acc;
     }, {});
 
-    const totalRevenue = periodOrders.reduce((sum, order) => sum + (order.total || 0), 0);
+    const recognizedRevenueOrders = periodOrders.filter((order) => isRecognizedRevenueOrder(order));
+    const totalRevenue = recognizedRevenueOrders.reduce((sum, order) => sum + (order.total || 0), 0);
     const occupiedTables = tables.filter((table) => table.status === 'occupied').length;
     const tablesWithSales = Object.values(byTable).filter((entry: any) => entry.ordersCount > 0).length;
 
@@ -169,7 +173,7 @@ export async function GET(req: NextRequest) {
         summary: {
             totalRevenue,
             totalOrders: periodOrders.length,
-            avgTicket: periodOrders.length > 0 ? totalRevenue / periodOrders.length : 0,
+            avgTicket: recognizedRevenueOrders.length > 0 ? totalRevenue / recognizedRevenueOrders.length : 0,
             occupiedTables,
             tablesWithSales,
         },

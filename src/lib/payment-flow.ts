@@ -37,9 +37,9 @@ export function getOrderPaymentConfig(input: OrderPaymentConfigInput) {
   if (input.manualPaymentFlow === 'settle_now') {
     return {
       paymentMethod: input.manualPaymentMethod,
-      paymentStatus: 'paid' as const,
-      status: 'pending' as const,
-      deferActivation: false,
+      paymentStatus: 'pending' as const,
+      status: 'draft' as const,
+      deferActivation: true,
     };
   }
 

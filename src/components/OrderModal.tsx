@@ -5,7 +5,6 @@ import { useSettings } from '@/contexts/SettingsContext';
 import { formatCurrency } from '@/lib/currency';
 import PaymentFlowSelector from '@/components/PaymentFlowSelector';
 import {
-    getManualPaymentMethodLabel,
     getOrderPaymentConfig,
     isManualPaymentMethod,
     type ManualPaymentFlow,
@@ -31,6 +30,8 @@ export default function OrderModal({ table, onClose }: { table: any, onClose: ()
     const [manualPaymentMethod, setManualPaymentMethod] = useState<ManualPaymentMethod>('cash');
     const [manualPaymentFlow, setManualPaymentFlow] = useState<ManualPaymentFlow>('settle_now');
     const [submitting, setSubmitting] = useState(false);
+    const [confirmingPayment, setConfirmingPayment] = useState(false);
+    const [paymentConfirmData, setPaymentConfirmData] = useState<{ id: string, method: ManualPaymentMethod, totalAmount: number } | null>(null);
 
     useEffect(() => {
         Promise.all([
@@ -128,15 +129,19 @@ export default function OrderModal({ table, onClose }: { table: any, onClose: ()
                 throw new Error(editingOrderId ? 'Failed to update order' : 'Failed to create order');
             }
 
+            if (manualPaymentFlow === 'settle_now' && !editingOrderId) {
+                const createdOrder = await res.json();
+                setPaymentConfirmData({ id: createdOrder.id, method: manualPaymentMethod, totalAmount: total });
+                return; // don't close until confirmed
+            }
+
             toast(
                 'success',
                 editingOrderId
                     ? 'Order updated successfully'
                     : paymentChannel === 'monime'
                         ? 'Checkout created. Waiting for payment confirmation.'
-                        : manualPaymentFlow === 'settle_now'
-                            ? `${getManualPaymentMethodLabel(manualPaymentMethod)} payment recorded and order sent to kitchen.`
-                            : 'Open tab saved. Settle it later from this checkout panel.'
+                        : 'Open tab saved. Settle it later from this checkout panel.'
             );
             setEditingOrderId(null);
             setPaymentChannel('manual');
@@ -164,22 +169,35 @@ export default function OrderModal({ table, onClose }: { table: any, onClose: ()
         }
     };
 
-    const confirmManualPayment = async (orderId: string) => {
+    const confirmManualPayment = async (orderId: string, methodOverride?: string) => {
         const existingOrder = table.orders?.find((order: any) => order.id === orderId);
-        const storedMethod = isManualPaymentMethod(existingOrder?.paymentMethod)
-            ? existingOrder.paymentMethod
-            : 'cash';
-        const res = await fetch(`/api/orders/${orderId}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'confirm_manual_payment', paymentMethod: storedMethod })
-        });
+        let storedMethod = methodOverride;
+        if (!storedMethod) {
+            storedMethod = isManualPaymentMethod(existingOrder?.paymentMethod)
+                ? existingOrder.paymentMethod
+                : 'cash';
+        }
+        setConfirmingPayment(true);
+        try {
+            const res = await fetch(`/api/orders/${orderId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'confirm_manual_payment', paymentMethod: storedMethod })
+            });
 
-        if (res.ok) {
-            toast('success', `${getManualPaymentMethodLabel(storedMethod)} payment confirmed and order sent to kitchen`);
+            const data = await res.json().catch(() => null);
+
+            if (!res.ok) {
+                throw new Error(data?.error || 'Failed to confirm payment');
+            }
+
+            toast('success', 'Cash received confirmed and order sent to kitchen');
+            setPaymentConfirmData(null);
             onClose();
-        } else {
-            toast('error', 'Failed to confirm payment');
+        } catch (error) {
+            toast('error', error instanceof Error ? error.message : 'Failed to confirm payment');
+        } finally {
+            setConfirmingPayment(false);
         }
     };
 
@@ -303,7 +321,7 @@ export default function OrderModal({ table, onClose }: { table: any, onClose: ()
                                                                             onClick={() => confirmManualPayment(o.id)}
                                                                             style={{ fontSize: 11, color: '#10b981', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
                                                                         >
-                                                                            Settle {getManualPaymentMethodLabel(o.paymentMethod)}
+                                                                            Confirm Cash Received
                                                                         </button>
                                                                     )}
                                                                     <button
@@ -377,7 +395,7 @@ export default function OrderModal({ table, onClose }: { table: any, onClose: ()
                                     </div>
                                 ) : (
                                     <button className="btn btn-primary w-full mt-4" onClick={submitOrder} disabled={cart.length === 0 || submitting} style={{ padding: 12, justifyContent: 'center' }}>
-                                        <CreditCard size={16} /> {submitting ? 'Processing...' : paymentChannel === 'monime' ? 'Pay with Monime' : manualPaymentFlow === 'settle_now' ? `Collect ${getManualPaymentMethodLabel(manualPaymentMethod)} & Send to Kitchen` : 'Save Open Tab'}
+                                        <CreditCard size={16} /> {submitting ? 'Processing...' : paymentChannel === 'monime' ? 'Pay with Monime' : manualPaymentFlow === 'settle_now' ? 'Confirm Cash Received' : 'Save Open Tab'}
                                     </button>
                                 )}
                             </div>
@@ -385,6 +403,28 @@ export default function OrderModal({ table, onClose }: { table: any, onClose: ()
                     </>
                 )}
             </div>
+
+            {paymentConfirmData && (
+                <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }}>
+                    <div style={{ background: 'var(--bg-card)', padding: 32, borderRadius: 'var(--radius-lg)', width: 400, textAlign: 'center', border: '1px solid var(--border)' }}>
+                        <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'rgba(56,189,248,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', color: '#38bdf8' }}>
+                            <CreditCard size={32} />
+                        </div>
+                        <h3 style={{ fontSize: 20, fontWeight: 'bold', marginBottom: 8 }}>Confirm Cash Received</h3>
+                        <p style={{ color: 'var(--text-secondary)', marginBottom: 24, fontSize: 14 }}>
+                            Has the waiter received {formatCurrency(paymentConfirmData.totalAmount, settings.currencySymbol)} in cash? Confirming will send the order to the kitchen.
+                        </p>
+                        <div style={{ display: 'flex', gap: 12 }}>
+                            <button className="btn btn-secondary w-full" type="button" disabled={confirmingPayment} onClick={() => { setPaymentConfirmData(null); onClose(); }} style={{ padding: 12, justifyContent: 'center' }}>
+                                Cancel & Keep in Draft
+                            </button>
+                            <button className="btn btn-primary w-full" type="button" disabled={confirmingPayment} onClick={() => confirmManualPayment(paymentConfirmData.id, paymentConfirmData.method)} style={{ padding: 12, justifyContent: 'center' }}>
+                                {confirmingPayment ? 'Confirming...' : 'Confirm Cash Received'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

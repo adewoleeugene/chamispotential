@@ -6,8 +6,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSettings } from '@/contexts/SettingsContext';
 import OrderModal from '@/components/OrderModal';
 import {
-    GitMerge, UtensilsCrossed, ShoppingBag, Truck,
-    CalendarDays, Printer, RefreshCw, ZoomIn, ZoomOut,
+    GitMerge, UtensilsCrossed,
+    CalendarDays, RefreshCw, ZoomIn, ZoomOut,
     Users, X, CheckCircle, ArrowRight, Link, Plus, Pencil, Trash2, LocateFixed,
     BarChart3, DollarSign, ShoppingCart
 } from 'lucide-react';
@@ -81,40 +81,20 @@ function getTableLayout(table: any) {
     };
 }
 
-function getElapsedMinutes(orders: any[], now: number | null): number | null {
-    if (!orders || orders.length === 0) return null;
-    if (now === null) return null;
-    return Math.floor((now - new Date(orders[0].createdAt).getTime()) / 60000);
-}
-
-function formatTimer(minutes: number): string {
-    const h = Math.floor(minutes / 60);
-    const m = minutes % 60;
-    return h > 0 ? `${h}h${String(m).padStart(2, '0')}` : `${String(m).padStart(2, '0')}:00`;
-}
-
 function formatShortMoney(amount: number, currencySymbol: string) {
     if (amount >= 1000) return `${currencySymbol}${(amount / 1000).toFixed(1)}k`;
     return formatCurrency(amount, currencySymbol);
 }
 
 /* ─── Status-based visual tokens ──────────────────────────────────────────── */
-function getTokens(status: string, elapsed: number | null) {
-    const isAlert = elapsed !== null && elapsed >= 60;
+function getTokens(status: string, hasActiveOrders: boolean) {
+    if (hasActiveOrders) {
+        return { body: '#1a2510', border: '#2d4a1a', seat: '#c7923a', shadow: '0 0 18px rgba(34,197,94,0.2)' };
+    }
     if (status === 'available') {
-        return { body: '#1c2130', border: '#2a3044', seat: '#2e3548', timerBg: '', shadow: 'none' };
+        return { body: '#1c2130', border: '#2a3044', seat: '#2e3548', shadow: 'none' };
     }
-    if (status === 'reserved') {
-        return { body: '#0f1e35', border: '#2563eb', seat: '#3b82f6', timerBg: '#2563eb', shadow: '0 0 18px rgba(37,99,235,0.35)' };
-    }
-    if (status === 'cleaning') {
-        return { body: '#1a1030', border: '#7c3aed', seat: '#7c3aed', timerBg: '#7c3aed', shadow: '0 0 18px rgba(124,58,237,0.3)' };
-    }
-    // occupied
-    if (isAlert) {
-        return { body: '#2a1515', border: '#dc2626', seat: '#dc2626', timerBg: '#dc2626', shadow: '0 0 22px rgba(220,38,38,0.4)' };
-    }
-    return { body: '#1a2510', border: '#2d4a1a', seat: '#c7923a', timerBg: '#0d7c5a', shadow: '0 0 18px rgba(34,197,94,0.2)' };
+    return { body: '#0f1e35', border: '#334155', seat: '#64748b', shadow: '0 0 18px rgba(100,116,139,0.18)' };
 }
 
 /* ─── Rectangular seat indicators ─────────────────────────────────────────── */
@@ -180,7 +160,6 @@ type MergeHighlight = 'none' | 'source' | 'target' | 'dim';
 type DragPreview = { x: number; y: number };
 function TablePod({
     table,
-    now,
     onClick,
     mergeHighlight = 'none',
     isAdmin = false,
@@ -193,7 +172,6 @@ function TablePod({
     isDragging = false,
 }: {
     table: any;
-    now: number | null;
     onClick: () => void;
     mergeHighlight?: MergeHighlight;
     isAdmin?: boolean;
@@ -207,8 +185,8 @@ function TablePod({
 }) {
     const baseLayout = getTableLayout(table);
     const layout = dragPreview || baseLayout;
-    const elapsed = getElapsedMinutes(table.orders, now);
-    const tok = getTokens(table.status, elapsed);
+    const hasActiveOrders = (table.orders?.length || 0) > 0;
+    const tok = getTokens(table.status, hasActiveOrders);
     const total = table.orders?.reduce((s: number, o: any) => s + (o.total || 0), 0) || 0;
     const waiter = table.orders?.[0]?.user?.name;
     const analytics: TableAnalytics = table.analytics || EMPTY_ANALYTICS;
@@ -245,23 +223,6 @@ function TablePod({
         }}
             onClick={onClick}
         >
-            {/* Timer badge — floats above */}
-            {elapsed !== null && tok.timerBg && (
-                <div style={{
-                    background: tok.timerBg,
-                    color: '#fff',
-                    fontSize: 11,
-                    fontWeight: 700,
-                    padding: '3px 10px',
-                    borderRadius: 20,
-                    marginBottom: 4,
-                    letterSpacing: 0.5,
-                    zIndex: 2,
-                }}>
-                    {formatTimer(elapsed)}
-                </div>
-            )}
-
             {/* Table body */}
             <div style={{
                 position: 'relative',
@@ -346,7 +307,7 @@ function TablePod({
                 )}
 
                 {/* Available label */}
-                {table.status === 'available' && (
+                {!hasActiveOrders && (
                     <div style={{ fontSize: 10, color: '#475569', marginTop: 4, letterSpacing: 1, textTransform: 'uppercase' }}>
                         Empty
                     </div>
@@ -417,7 +378,6 @@ export default function TablesPage() {
     const [loading, setLoading] = useState(true);
     const [selectedTable, setSelectedTable] = useState<any>(null);
     const [zoom, setZoom] = useState(100);
-    const [now, setNow] = useState<number | null>(null);
     const [isCompactViewport, setIsCompactViewport] = useState(false);
     const [dragPreviewById, setDragPreviewById] = useState<Record<string, DragPreview>>({});
     const [activeDragTableId, setActiveDragTableId] = useState<string | null>(null);
@@ -486,12 +446,6 @@ export default function TablesPage() {
         const i = setInterval(fetchTables, 30000);
         return () => clearInterval(i);
     }, [fetchTables]);
-    useEffect(() => {
-        const updateClock = () => setNow(Date.now());
-        updateClock();
-        const interval = window.setInterval(updateClock, 60000);
-        return () => window.clearInterval(interval);
-    }, []);
 
     useEffect(() => {
         const updateViewport = () => {
@@ -822,11 +776,9 @@ export default function TablesPage() {
     };
 
     const counts = {
-        seated: tables.filter(t => t.status === 'occupied').length,
-        ordered: tables.filter(t => t.orders?.length > 0).length,
         available: tables.filter(t => t.status === 'available').length,
-        reserved: tables.filter(t => t.status === 'reserved').length,
-        cleaning: tables.filter(t => t.status === 'cleaning').length,
+        activeOrders: tables.filter(t => t.orders?.length > 0).length,
+        emptyTables: tables.filter(t => !t.orders?.length).length,
     };
     const totalPax = tables.filter(t => t.status === 'occupied').reduce((s, t) => s + t.capacity, 0);
     const totalRevenu = tables.reduce((s, t) => s + (t.orders?.reduce((a: number, o: any) => a + (o.total || 0), 0) || 0), 0);
@@ -1001,7 +953,6 @@ export default function TablesPage() {
                                 <TablePod
                                     key={table.id}
                                     table={table}
-                                    now={now}
                                     onClick={() => handleTableClick(table)}
                                     viewerRole={user?.role}
                                     currencySymbol={settings.currencySymbol}
@@ -1186,37 +1137,6 @@ export default function TablesPage() {
                                 )}
                             </div>
 
-                            <div style={{ background: 'var(--bg-card)', borderRadius: 14, border: '1px solid var(--border)', padding: 14 }}>
-                                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.2, color: 'var(--text-muted)', marginBottom: 10 }}>New Order</div>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                                    <button onClick={() => toast('info', user?.role === 'waiter' ? 'Click a table to start a Dine-in order' : 'Only waiters can start dine-in orders.')}
-                                        style={{ background: '#15803d', border: 'none', borderRadius: 10, padding: '13px 14px', color: '#fff', fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', transition: 'filter 0.15s' }}>
-                                        <UtensilsCrossed size={17} /> Dine-in
-                                    </button>
-                                    <button onClick={() => toast('info', 'Takeaway — coming soon')}
-                                        style={{ background: '#c2410c', border: 'none', borderRadius: 10, padding: '13px 14px', color: '#fff', fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', transition: 'filter 0.15s' }}>
-                                        <ShoppingBag size={17} /> Take Away
-                                    </button>
-                                    <button onClick={() => toast('info', 'Delivery — coming soon')}
-                                        style={{ background: '#0369a1', border: 'none', borderRadius: 10, padding: '13px 14px', color: '#fff', fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', transition: 'filter 0.15s' }}>
-                                        <Truck size={17} /> Delivery
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div style={{ background: 'var(--bg-card)', borderRadius: 14, border: '1px solid var(--border)', padding: 14 }}>
-                                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.2, color: 'var(--text-muted)', marginBottom: 10 }}>Other Actions</div>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                                    <button onClick={() => toast('info', 'Reservation Overview — coming soon')}
-                                        style={{ background: 'var(--surface-active)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px', color: 'var(--text-secondary)', fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
-                                        <CalendarDays size={16} /> Reservation Overview
-                                    </button>
-                                    <button onClick={() => toast('info', 'Print — coming soon')}
-                                        style={{ background: 'var(--surface-active)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px', color: 'var(--text-secondary)', fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
-                                        <Printer size={16} /> Print Reservation
-                                    </button>
-                                </div>
-                            </div>
                         </>
                     )}
 
@@ -1237,11 +1157,9 @@ export default function TablesPage() {
                 flexWrap: 'wrap',
             }}>
                 {([
-                    { label: 'Seated', n: counts.seated, color: '#a855f7' },
-                    { label: 'Ordered', n: counts.ordered, color: '#22c55e' },
-                    { label: 'Available', n: counts.available, color: '#4b5563' },
-                    { label: 'Reserved', n: counts.reserved, color: '#3b82f6' },
-                    { label: 'Cleaning', n: counts.cleaning, color: '#f59e0b' },
+                    { label: 'Available', n: counts.available, color: '#64748b' },
+                    { label: 'Active Orders', n: counts.activeOrders, color: '#22c55e' },
+                    { label: 'Empty Tables', n: counts.emptyTables, color: '#94a3b8' },
                 ] as { label: string; n: number; color: string }[]).map(({ label, n, color }) => (
                     <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         <div style={{ width: 10, height: 10, borderRadius: '50%', background: color }} />

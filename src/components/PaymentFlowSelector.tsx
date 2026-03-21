@@ -1,12 +1,11 @@
 'use client';
 
 import React from 'react';
-import { CreditCard, ReceiptText, Smartphone, Wallet } from 'lucide-react';
+import { CreditCard, ReceiptText } from 'lucide-react';
 import {
   type ManualPaymentFlow,
   type ManualPaymentMethod,
   type PaymentChannel,
-  getManualPaymentMethodLabel,
 } from '@/lib/payment-flow';
 
 type PaymentFlowSelectorProps = {
@@ -18,112 +17,53 @@ type PaymentFlowSelectorProps = {
   onManualPaymentFlowChange: (value: ManualPaymentFlow) => void;
 };
 
-const manualPaymentOptions: Array<{
-  value: ManualPaymentMethod;
-  description: string;
-  icon: typeof Wallet;
-}> = [
-  { value: 'cash', description: 'Fast counter settlement for walk-ins and table turns.', icon: Wallet },
-  { value: 'card', description: 'Record POS terminal or swipe payments without leaving the order.', icon: CreditCard },
-  { value: 'mobile', description: 'Use mobile money or transfer and keep service moving.', icon: Smartphone },
-];
-
 export default function PaymentFlowSelector({
   paymentChannel,
   onPaymentChannelChange,
-  manualPaymentMethod,
-  onManualPaymentMethodChange,
-  manualPaymentFlow,
-  onManualPaymentFlowChange,
 }: PaymentFlowSelectorProps) {
+  const channelOptions: Array<{
+    value: PaymentChannel;
+    title: string;
+    description: string;
+    icon: typeof Wallet;
+  }> = [
+    {
+      value: 'manual',
+      title: 'Manual Checkout',
+      description: 'Collect payment here and keep the team in one screen.',
+      icon: ReceiptText,
+    },
+    {
+      value: 'monime',
+      title: 'Monime Checkout',
+      description: 'Launch hosted checkout and wait for provider confirmation.',
+      icon: CreditCard,
+    },
+  ];
+
   return (
     <div className="payment-flow-panel">
-      <div className="payment-flow-grid">
-        <button
-          type="button"
-          className={`payment-flow-card ${paymentChannel === 'manual' ? 'active' : ''}`}
-          onClick={() => onPaymentChannelChange('manual')}
-        >
-          <div className="payment-flow-icon">
-            <ReceiptText size={16} />
-          </div>
-          <div className="payment-flow-copy">
-            <div className="payment-flow-title">Manual Checkout</div>
-            <div className="payment-flow-text">Collect payment here and keep the team in one screen.</div>
-          </div>
-        </button>
+      <div className="category-tabs payment-channel-tabs" role="tablist" aria-label="Checkout mode">
+        {channelOptions.map((option) => {
+          const Icon = option.icon;
+          const isActive = paymentChannel === option.value;
 
-        <button
-          type="button"
-          className={`payment-flow-card ${paymentChannel === 'monime' ? 'active' : ''}`}
-          onClick={() => onPaymentChannelChange('monime')}
-        >
-          <div className="payment-flow-icon">
-            <CreditCard size={16} />
-          </div>
-          <div className="payment-flow-copy">
-            <div className="payment-flow-title">Monime Checkout</div>
-            <div className="payment-flow-text">Launch hosted checkout and wait for provider confirmation.</div>
-          </div>
-        </button>
+          return (
+            <button
+              key={option.value}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              className={`category-tab payment-channel-tab ${isActive ? 'active' : ''}`}
+              onClick={() => onPaymentChannelChange(option.value)}
+            >
+              <Icon size={14} />
+              <span>{option.title}</span>
+            </button>
+          );
+        })}
       </div>
 
-      {paymentChannel === 'manual' ? (
-        <>
-          <div className="payment-intent-grid">
-          <button
-            type="button"
-            className={`payment-intent-card ${manualPaymentFlow === 'settle_now' ? 'active' : ''}`}
-            onClick={() => onManualPaymentFlowChange('settle_now')}
-          >
-            <span className="payment-intent-eyebrow">Recommended</span>
-            <strong>Collect Now</strong>
-            <span>Mark the order paid and send it straight to the kitchen.</span>
-          </button>
-
-          <button
-            type="button"
-            className={`payment-intent-card ${manualPaymentFlow === 'open_tab' ? 'active' : ''}`}
-            onClick={() => onManualPaymentFlowChange('open_tab')}
-          >
-            <span className="payment-intent-eyebrow">Fallback</span>
-            <strong>Open Tab</strong>
-            <span>Save an unpaid ticket and settle it later from the same checkout panel.</span>
-          </button>
-        </div>
-
-          <div className="manual-method-grid">
-            {manualPaymentOptions.map((option) => {
-              const Icon = option.icon;
-
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  className={`manual-method-card ${manualPaymentMethod === option.value ? 'active' : ''}`}
-                  onClick={() => onManualPaymentMethodChange(option.value)}
-                >
-                  <div className="manual-method-header">
-                    <Icon size={15} />
-                    <strong>{getManualPaymentMethodLabel(option.value)}</strong>
-                  </div>
-                  <span>{option.description}</span>
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="payment-flow-note">
-            {manualPaymentFlow === 'settle_now'
-              ? `${getManualPaymentMethodLabel(manualPaymentMethod)} will be recorded immediately and the kitchen ticket will start right away.`
-              : `This tab stays unpaid until someone settles it, which keeps the kitchen paused until confirmation.`}
-          </div>
-        </>
-      ) : (
-        <div className="payment-flow-note">
-          Monime keeps the order in payment confirmation until the hosted checkout or webhook reports a final result.
-        </div>
-      )}
     </div>
   );
 }
