@@ -79,6 +79,7 @@ export async function GET(req: NextRequest) {
                 tableId: true,
                 total: true,
                 status: true,
+                paymentStatus: true,
                 type: true,
                 createdAt: true,
             },
@@ -93,6 +94,8 @@ export async function GET(req: NextRequest) {
                 id: true,
                 tableId: true,
                 total: true,
+                status: true,
+                paymentStatus: true,
             },
         }),
     ]);

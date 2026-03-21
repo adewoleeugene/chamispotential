@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { CreditCard, ReceiptText } from 'lucide-react';
+import { CreditCard, ReceiptText, type LucideIcon } from 'lucide-react';
 import {
   type ManualPaymentFlow,
   type ManualPaymentMethod,
@@ -25,7 +25,7 @@ export default function PaymentFlowSelector({
     value: PaymentChannel;
     title: string;
     description: string;
-    icon: typeof Wallet;
+    icon: LucideIcon;
   }> = [
     {
       value: 'manual',

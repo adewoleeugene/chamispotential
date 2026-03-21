@@ -780,7 +780,6 @@ export default function TablesPage() {
         activeOrders: tables.filter(t => t.orders?.length > 0).length,
         emptyTables: tables.filter(t => !t.orders?.length).length,
     };
-    const totalPax = tables.filter(t => t.status === 'occupied').reduce((s, t) => s + t.capacity, 0);
     const totalRevenu = tables.reduce((s, t) => s + (t.orders?.reduce((a: number, o: any) => a + (o.total || 0), 0) || 0), 0);
     const selectedTableAnalytics: TableAnalytics = selectedTable?.analytics || EMPTY_ANALYTICS;
     const managerSummaryCards = analyticsMeta ? [
@@ -830,8 +829,9 @@ export default function TablesPage() {
                     <span style={{ fontWeight: 700, fontSize: 15 }}>Floor Management</span>
                 </div>
                 <div className="floor-header-metrics" style={{ display: 'flex', gap: 14, fontSize: 13, color: 'var(--text-secondary)', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                    <span><b style={{ color: '#fff' }}>{counts.seated}</b> Dine-in</span>
-                    <span><b style={{ color: '#fff' }}>{counts.ordered}</b> Ordered</span>
+                    <span><b style={{ color: '#fff' }}>{counts.available}</b> Available</span>
+                    <span><b style={{ color: '#fff' }}>{counts.activeOrders}</b> Active Orders</span>
+                    <span><b style={{ color: '#fff' }}>{counts.emptyTables}</b> Empty Tables</span>
                     <span style={{ color: '#22c55e', fontWeight: 700 }}>{formatCurrency(totalRevenu, settings.currencySymbol)} Revenue</span>
                     {user?.role === 'admin' && (
                         <button
@@ -1167,10 +1167,6 @@ export default function TablesPage() {
                         <span style={{ color: 'var(--text-muted)' }}>{label}</span>
                     </div>
                 ))}
-                <div className="floor-status-pax" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-secondary)', fontWeight: 600 }}>
-                    <Users size={13} />
-                    PAX: <strong style={{ color: '#fff' }}>{totalPax}</strong>
-                </div>
             </div>
             </div>
             </div>
