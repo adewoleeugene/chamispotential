@@ -451,7 +451,7 @@ function KitchenPageContent() {
                             </div>
                             <span className="badge" style={{ background: 'rgba(16,185,129,0.16)', color: '#6ee7b7' }}>{servedOrders.length}</span>
                         </div>
-                        {servedOrders.length > 0 ? servedOrders.map(order => renderServedCard(order)) : (
+                        {servedOrders.length > 0 ? servedOrders.map(order => renderOrderCard(order)) : (
                             <div style={{
                                 padding: '28px 24px',
                                 textAlign: 'center',

@@ -326,6 +326,7 @@ export function buildPeriodComparisonSummary(params: {
   inventory: AnalyticsInventory[];
   start: Date;
   end: Date;
+  costMethod?: CostMethod;
 }): PeriodComparisonSummary {
   const analytics = buildFinancialAnalytics({
     range: params.range,
@@ -334,6 +335,7 @@ export function buildPeriodComparisonSummary(params: {
     orders: params.orders,
     purchases: params.purchases,
     inventory: params.inventory,
+    costMethod: params.costMethod,
   });
   const topPurchasedIngredient = analytics.purchaseAnalytics.topPurchasedIngredients[0];
 
