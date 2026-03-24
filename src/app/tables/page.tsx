@@ -8,10 +8,11 @@ import OrderModal from '@/components/OrderModal';
 import {
     GitMerge, UtensilsCrossed,
     CalendarDays, RefreshCw, ZoomIn, ZoomOut,
-    Users, X, CheckCircle, ArrowRight, Link, Plus, Pencil, Trash2, LocateFixed,
+    Users, X, CheckCircle, ArrowRight, Link, Plus, Pencil, Trash2, LocateFixed, Clock3,
     BarChart3, DollarSign, ShoppingCart
 } from 'lucide-react';
 import { formatCurrency } from '@/lib/currency';
+import { getTableDisplayStatus, TABLE_STATUS_COLORS } from '@/lib/table-status';
 
 type AnalyticsRange = 'day' | 'week' | 'month';
 
@@ -86,15 +87,30 @@ function formatShortMoney(amount: number, currencySymbol: string) {
     return formatCurrency(amount, currencySymbol);
 }
 
+function formatElapsedMinutes(startedAt?: string | null, endedAt?: string | null, status?: string | null, now = Date.now()) {
+    if (!startedAt) return null;
+    if (status === 'served' || status === 'completed' || status === 'cancelled') return null;
+    const endTime = endedAt ? new Date(endedAt).getTime() : now;
+    const minutes = Math.max(0, Math.floor((endTime - new Date(startedAt).getTime()) / 60000));
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    return hours > 0 ? `${hours}h ${remainingMinutes}m` : `${remainingMinutes}m`;
+}
+
 /* ─── Status-based visual tokens ──────────────────────────────────────────── */
 function getTokens(status: string, hasActiveOrders: boolean) {
-    if (hasActiveOrders) {
-        return { body: '#1a2510', border: '#2d4a1a', seat: '#c7923a', shadow: '0 0 18px rgba(34,197,94,0.2)' };
+    const displayStatus = getTableDisplayStatus({ status, activeOrderCount: hasActiveOrders ? 1 : 0 });
+
+    if (displayStatus === 'occupied') {
+        return { body: '#2a1215', border: TABLE_STATUS_COLORS.occupied.solid, seat: '#fca5a5', shadow: '0 0 18px rgba(239,68,68,0.22)' };
     }
-    if (status === 'available') {
-        return { body: '#1c2130', border: '#2a3044', seat: '#2e3548', shadow: 'none' };
+    if (displayStatus === 'available') {
+        return { body: '#12261d', border: TABLE_STATUS_COLORS.available.solid, seat: '#86efac', shadow: '0 0 18px rgba(16,185,129,0.2)' };
     }
-    return { body: '#0f1e35', border: '#334155', seat: '#64748b', shadow: '0 0 18px rgba(100,116,139,0.18)' };
+    if (displayStatus === 'reserved') {
+        return { body: '#1f2937', border: TABLE_STATUS_COLORS.reserved.solid, seat: '#cbd5e1', shadow: '0 0 18px rgba(148,163,184,0.18)' };
+    }
+    return { body: '#0f172a', border: '#64748b', seat: '#94a3b8', shadow: '0 0 18px rgba(100,116,139,0.18)' };
 }
 
 /* ─── Rectangular seat indicators ─────────────────────────────────────────── */
@@ -189,6 +205,8 @@ function TablePod({
     const tok = getTokens(table.status, hasActiveOrders);
     const total = table.orders?.reduce((s: number, o: any) => s + (o.total || 0), 0) || 0;
     const waiter = table.orders?.[0]?.user?.name;
+    const startedOrder = table.orders?.find((order: any) => order.serviceStartedAt) || table.orders?.[0];
+    const elapsedLabel = formatElapsedMinutes(startedOrder?.serviceStartedAt, startedOrder?.serviceEndedAt, startedOrder?.status);
     const analytics: TableAnalytics = table.analytics || EMPTY_ANALYTICS;
     const isManagerView = viewerRole === 'manager';
     const layoutShape = dragPreview ? (table.shape === 'circle' ? 'circle' : 'rect') : baseLayout.shape;
@@ -301,8 +319,16 @@ function TablePod({
                         </div>
                     </div>
                 ) : total > 0 && (
-                    <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 3 }}>
-                        ${total.toFixed(0)}
+                    <div style={{ marginTop: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                        <div style={{ fontSize: 12, color: '#94a3b8' }}>
+                            ${total.toFixed(0)}
+                        </div>
+                        {elapsedLabel && (
+                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#f8fafc', background: 'rgba(15,23,42,0.72)', border: '1px solid rgba(148,163,184,0.2)', borderRadius: 999, padding: '3px 8px' }}>
+                                <Clock3 size={12} />
+                                {elapsedLabel}
+                            </div>
+                        )}
                     </div>
                 )}
 
@@ -363,6 +389,7 @@ export default function TablesPage() {
     } | null>(null);
     const layoutPreviewRef = useRef<Record<string, DragPreview>>({});
     const suppressTapRef = useRef(false);
+    const hasLoadedTablesRef = useRef(false);
     const [tables, setTables] = useState<any[]>([]);
     const [tableAnalyticsRange, setTableAnalyticsRange] = useState<AnalyticsRange>('week');
     const [analyticsMeta, setAnalyticsMeta] = useState<{
@@ -376,6 +403,7 @@ export default function TablesPage() {
         };
     } | null>(null);
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
     const [selectedTable, setSelectedTable] = useState<any>(null);
     const [zoom, setZoom] = useState(100);
     const [isCompactViewport, setIsCompactViewport] = useState(false);
@@ -383,6 +411,7 @@ export default function TablesPage() {
     const [activeDragTableId, setActiveDragTableId] = useState<string | null>(null);
     const [activeDragLabel, setActiveDragLabel] = useState('');
     const [savingDragTableId, setSavingDragTableId] = useState<string | null>(null);
+    const [, setClockNow] = useState(() => Date.now());
     const toast = useToast();
     const [isTableModalOpen, setIsTableModalOpen] = useState(false);
     const [tableModalMode, setTableModalMode] = useState<'add' | 'edit'>('add');
@@ -437,15 +466,33 @@ export default function TablesPage() {
                     setAnalyticsMeta(null);
                 });
 
-        return request.finally(() => setLoading(false));
+        return request.finally(() => {
+            setLoading(false);
+            setRefreshing(false);
+        });
     }, [tableAnalyticsRange, user?.role]);
 
     useEffect(() => {
-        setLoading(true);
+        if (hasLoadedTablesRef.current) {
+            setRefreshing(true);
+        } else {
+            setLoading(true);
+        }
         void fetchTables();
         const i = setInterval(fetchTables, 30000);
         return () => clearInterval(i);
     }, [fetchTables]);
+
+    useEffect(() => {
+        if (!loading) {
+            hasLoadedTablesRef.current = true;
+        }
+    }, [loading]);
+
+    useEffect(() => {
+        const interval = setInterval(() => setClockNow(Date.now()), 60000);
+        return () => clearInterval(interval);
+    }, []);
 
     useEffect(() => {
         const updateViewport = () => {
@@ -776,7 +823,9 @@ export default function TablesPage() {
     };
 
     const counts = {
-        available: tables.filter(t => t.status === 'available').length,
+        available: tables.filter((t) => getTableDisplayStatus({ status: t.status, activeOrderCount: t.orders?.length || 0 }) === 'available').length,
+        occupied: tables.filter((t) => getTableDisplayStatus({ status: t.status, activeOrderCount: t.orders?.length || 0 }) === 'occupied').length,
+        reserved: tables.filter((t) => getTableDisplayStatus({ status: t.status, activeOrderCount: t.orders?.length || 0 }) === 'reserved').length,
         activeOrders: tables.filter(t => t.orders?.length > 0).length,
         emptyTables: tables.filter(t => !t.orders?.length).length,
     };
@@ -809,7 +858,7 @@ export default function TablesPage() {
         },
     ] : [];
 
-    if (loading) return <AppLayout><div style={{ display: 'flex', justifyContent: 'center', padding: 100 }}><div className="loading-spinner" /></div></AppLayout>;
+    if (loading && tables.length === 0) return <AppLayout><div style={{ display: 'flex', justifyContent: 'center', padding: 100 }}><div className="loading-spinner" /></div></AppLayout>;
 
     return (
         <AppLayout>
@@ -827,6 +876,22 @@ export default function TablesPage() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <UtensilsCrossed size={17} style={{ color: 'var(--brand-500)' }} />
                     <span style={{ fontWeight: 700, fontSize: 15 }}>Floor Management</span>
+                    {refreshing && (
+                        <span style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            padding: '5px 10px',
+                            borderRadius: 999,
+                            background: 'rgba(37,99,235,0.16)',
+                            color: '#bfdbfe',
+                            fontSize: 11,
+                            fontWeight: 700,
+                            letterSpacing: 0.4,
+                            textTransform: 'uppercase',
+                        }}>
+                            Refreshing
+                        </span>
+                    )}
                 </div>
                 <div className="floor-header-metrics" style={{ display: 'flex', gap: 14, fontSize: 13, color: 'var(--text-secondary)', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                     <span><b style={{ color: '#fff' }}>{counts.available}</b> Available</span>
@@ -1157,9 +1222,9 @@ export default function TablesPage() {
                 flexWrap: 'wrap',
             }}>
                 {([
-                    { label: 'Available', n: counts.available, color: '#64748b' },
-                    { label: 'Active Orders', n: counts.activeOrders, color: '#22c55e' },
-                    { label: 'Empty Tables', n: counts.emptyTables, color: '#94a3b8' },
+                    { label: 'Available', n: counts.available, color: TABLE_STATUS_COLORS.available.solid },
+                    { label: 'Occupied', n: counts.occupied, color: TABLE_STATUS_COLORS.occupied.solid },
+                    { label: 'Reserved', n: counts.reserved, color: TABLE_STATUS_COLORS.reserved.solid },
                 ] as { label: string; n: number; color: string }[]).map(({ label, n, color }) => (
                     <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         <div style={{ width: 10, height: 10, borderRadius: '50%', background: color }} />
@@ -1175,6 +1240,7 @@ export default function TablesPage() {
             {selectedTable && mergeStep === 'idle' && user?.role === 'waiter' && (
                 <OrderModal
                     table={selectedTable}
+                    onRefresh={fetchTables}
                     onClose={() => { setSelectedTable(null); fetchTables(); }}
                 />
             )}

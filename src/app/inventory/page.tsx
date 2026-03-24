@@ -7,6 +7,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { useSettings } from '@/contexts/SettingsContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/currency';
+import { formatUtcCalendarDate, getLocalDateInputValue, toUtcDateInputValue } from '@/lib/date-only';
 
 type InventoryItem = {
     id: string;
@@ -17,17 +18,73 @@ type InventoryItem = {
     minStock: number;
     maxStock: number | null;
     cost: number | null;
+    weightedAverageCost: number;
+    latestUnitCost: number | null;
     supplier: string | null;
     location: string | null;
     lastRestocked: string | null;
+    lastPurchaseAt: string | null;
     expiryDate: string | null;
     weeklyUsage: number;
     dailyUsage: number;
     daysRemaining: number | null;
     recommendedReorderQty: number;
     advice: 'reorder_now' | 'reorder_soon' | 'healthy';
+    weeklyPurchaseSpend: number;
+    monthlyPurchaseSpend: number;
     drivers?: Array<{ menuItemId: string; menuItemName: string; usage: number }>;
 };
+
+type InventoryPurchase = {
+    id: string;
+    inventoryId: string;
+    inventoryName: string;
+    unit: string;
+    quantity: number;
+    unitCost: number;
+    totalCost: number;
+    supplier: string | null;
+    notes: string | null;
+    purchasedAt: string;
+};
+
+type PurchaseSummary = {
+    weekSpend: number;
+    monthSpend: number;
+    recentPurchases: InventoryPurchase[];
+};
+
+const EMPTY_PURCHASE_SUMMARY: PurchaseSummary = {
+    weekSpend: 0,
+    monthSpend: 0,
+    recentPurchases: [],
+};
+
+function normalizeInventoryItems(input: unknown): InventoryItem[] {
+    if (!Array.isArray(input)) return [];
+    return input.filter((item): item is InventoryItem => Boolean(item && typeof item === 'object'));
+}
+
+function normalizeTopUsed(input: unknown) {
+    if (!Array.isArray(input)) return [];
+    return input.filter((item): item is { id: string; name: string; weeklyUsage: number; unit: string } => Boolean(item && typeof item === 'object'));
+}
+
+function normalizePurchaseSummary(input: unknown): PurchaseSummary {
+    if (!input || typeof input !== 'object') return EMPTY_PURCHASE_SUMMARY;
+    const candidate = input as Partial<PurchaseSummary>;
+    return {
+        weekSpend: typeof candidate.weekSpend === 'number' ? candidate.weekSpend : 0,
+        monthSpend: typeof candidate.monthSpend === 'number' ? candidate.monthSpend : 0,
+        recentPurchases: Array.isArray(candidate.recentPurchases) ? candidate.recentPurchases.filter((purchase): purchase is InventoryPurchase => Boolean(purchase && typeof purchase === 'object')) : [],
+    };
+}
+
+function formatPurchaseDate(value: string | null | undefined) {
+    if (!value) return 'No purchase history';
+    const formatted = formatUtcCalendarDate(value);
+    return formatted ? `Bought ${formatted}` : 'No purchase history';
+}
 
 type InventoryFormState = {
     id: string;
@@ -60,8 +117,7 @@ const EMPTY_FORM: InventoryFormState = {
 };
 
 function toDateInput(value: string | null) {
-    if (!value) return '';
-    return new Date(value).toISOString().slice(0, 10);
+    return toUtcDateInputValue(value);
 }
 
 function InventoryPageContent() {
@@ -70,28 +126,47 @@ function InventoryPageContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const [items, setItems] = useState<InventoryItem[]>([]);
-    const [adviceSummary, setAdviceSummary] = useState<any>({ reorderNow: 0, reorderSoon: 0, topUsed: [] });
+    const [adviceSummary, setAdviceSummary] = useState<{ reorderNow: number; reorderSoon: number; topUsed: Array<{ id: string; name: string; weeklyUsage: number; unit: string }> }>({ reorderNow: 0, reorderSoon: 0, topUsed: [] });
+    const [purchaseSummary, setPurchaseSummary] = useState<PurchaseSummary>(EMPTY_PURCHASE_SUMMARY);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState('');
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [isPurchaseModalOpen, setIsPurchaseModalOpen] = useState(false);
     const [form, setForm] = useState<InventoryFormState>(EMPTY_FORM);
+    const [purchaseForm, setPurchaseForm] = useState({
+        inventoryId: '',
+        quantity: '',
+        unitCost: '',
+        loggedAt: getLocalDateInputValue(),
+        actualPurchasedAt: '',
+        supplier: '',
+        notes: '',
+    });
     const [saving, setSaving] = useState(false);
     const toast = useToast();
     const focus = searchParams.get('focus');
     const canManageInventory = user?.role === 'admin' || user?.role === 'manager';
+    const currencySymbol = settings?.currencySymbol || 'Le';
 
     const loadInventory = useCallback(() => {
         setLoading(true);
         fetch('/api/inventory')
             .then(r => r.json())
             .then(d => {
-                setItems(Array.isArray(d.items) ? d.items : []);
-                setAdviceSummary(d.adviceSummary || { reorderNow: 0, reorderSoon: 0, topUsed: [] });
+                const nextItems = normalizeInventoryItems(d?.items);
+                setItems(nextItems);
+                setAdviceSummary({
+                    reorderNow: typeof d?.adviceSummary?.reorderNow === 'number' ? d.adviceSummary.reorderNow : 0,
+                    reorderSoon: typeof d?.adviceSummary?.reorderSoon === 'number' ? d.adviceSummary.reorderSoon : 0,
+                    topUsed: normalizeTopUsed(d?.adviceSummary?.topUsed),
+                });
+                setPurchaseSummary(normalizePurchaseSummary(d?.purchaseSummary));
                 setLoading(false);
             })
             .catch(() => {
                 setItems([]);
                 setAdviceSummary({ reorderNow: 0, reorderSoon: 0, topUsed: [] });
+                setPurchaseSummary(EMPTY_PURCHASE_SUMMARY);
                 setLoading(false);
                 toast('error', 'Failed to load inventory data');
             });
@@ -150,6 +225,19 @@ function InventoryPageContent() {
         setIsModalOpen(true);
     };
 
+    const openPurchaseModal = () => {
+        setPurchaseForm({
+            inventoryId: items[0]?.id || '',
+            quantity: '',
+            unitCost: '',
+            loggedAt: getLocalDateInputValue(),
+            actualPurchasedAt: '',
+            supplier: '',
+            notes: '',
+        });
+        setIsPurchaseModalOpen(true);
+    };
+
     const openEditModal = (item: InventoryItem) => {
         setForm({
             id: item.id,
@@ -166,6 +254,42 @@ function InventoryPageContent() {
             expiryDate: toDateInput(item.expiryDate),
         });
         setIsModalOpen(true);
+    };
+
+    const submitPurchase = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!canManageInventory) {
+            toast('error', 'Unauthorized');
+            return;
+        }
+
+        setSaving(true);
+        try {
+            const res = await fetch('/api/inventory/purchases', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    inventoryId: purchaseForm.inventoryId,
+                    quantity: purchaseForm.quantity,
+                    unitCost: purchaseForm.unitCost,
+                    purchasedAt: purchaseForm.actualPurchasedAt || purchaseForm.loggedAt,
+                    supplier: purchaseForm.supplier,
+                    notes: purchaseForm.notes,
+                }),
+            });
+            const data = await res.json().catch(() => null);
+            if (!res.ok) {
+                throw new Error(data?.error || 'Failed to record purchase');
+            }
+
+            toast('success', 'Ingredient purchase recorded');
+            setIsPurchaseModalOpen(false);
+            void loadInventory();
+        } catch (error) {
+            toast('error', error instanceof Error ? error.message : 'Failed to record purchase');
+        } finally {
+            setSaving(false);
+        }
     };
 
     const submitForm = async (e: React.FormEvent) => {
@@ -241,7 +365,10 @@ function InventoryPageContent() {
                     <input type="text" placeholder="Search inventory..." value={search} onChange={e => setSearch(e.target.value)} />
                 </div>
                 {canManageInventory && (
-                    <button className="btn btn-primary" onClick={openAddModal}><Plus size={16} /> Add Inventory</button>
+                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                        <button className="btn btn-secondary" onClick={openPurchaseModal}><Plus size={16} /> Log Purchase</button>
+                        <button className="btn btn-primary" onClick={openAddModal}><Plus size={16} /> Add Inventory</button>
+                    </div>
                 )}
             </div>
 
@@ -266,19 +393,24 @@ function InventoryPageContent() {
 
             <div className="grid-3 gap-4 mb-6">
                 <div className="card">
+                    <div className="text-sm text-muted mb-2">Ingredient spend this week</div>
+                    <div style={{ fontSize: 28, fontWeight: 800, color: '#38bdf8' }}>{formatCurrency(purchaseSummary.weekSpend || 0, currencySymbol)}</div>
+                    <div className="text-sm text-muted mt-2">Pulled from individual market purchases.</div>
+                </div>
+                <div className="card">
+                    <div className="text-sm text-muted mb-2">Ingredient spend this month</div>
+                    <div style={{ fontSize: 28, fontWeight: 800, color: '#a78bfa' }}>{formatCurrency(purchaseSummary.monthSpend || 0, currencySymbol)}</div>
+                    <div className="text-sm text-muted mt-2">Monthly purchase roll-up for finance review.</div>
+                </div>
+                <div className="card">
                     <div className="text-sm text-muted mb-2">Reorder now</div>
                     <div style={{ fontSize: 28, fontWeight: 800, color: '#ef4444' }}>{adviceSummary.reorderNow || 0}</div>
                     <div className="text-sm text-muted mt-2">Items already below safe usage cover or min stock.</div>
                 </div>
                 <div className="card">
-                    <div className="text-sm text-muted mb-2">Reorder soon</div>
-                    <div style={{ fontSize: 28, fontWeight: 800, color: '#f59e0b' }}>{adviceSummary.reorderSoon || 0}</div>
-                    <div className="text-sm text-muted mt-2">Items projected to run low within the next week.</div>
-                </div>
-                <div className="card">
                     <div className="text-sm text-muted mb-2">Top usage this week</div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        {(adviceSummary.topUsed || []).slice(0, 3).map((item: any) => (
+                        {adviceSummary.topUsed.slice(0, 3).map((item) => (
                             <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13 }}>
                                 <span className="font-bold">{item.name}</span>
                                 <span className="text-muted">{item.weeklyUsage.toFixed(1)} {item.unit}</span>
@@ -299,7 +431,7 @@ function InventoryPageContent() {
                             <th>Category</th>
                             <th>Stock Level</th>
                             <th>Usage Advice</th>
-                            <th>Unit Cost</th>
+                            <th>Weighted Cost</th>
                             <th>Supplier</th>
                             {canManageInventory && <th>Actions</th>}
                         </tr>
@@ -354,8 +486,18 @@ function InventoryPageContent() {
                                             )}
                                         </div>
                                     </td>
-                                    <td className="font-bold">{formatCurrency(item.cost || 0, settings.currencySymbol)} /{item.unit}</td>
-                                    <td className="text-muted text-sm">{item.supplier || '-'}</td>
+                                    <td>
+                                        <div className="font-bold">{formatCurrency(item.weightedAverageCost || 0, currencySymbol)} /{item.unit}</div>
+                                        <div className="text-xs text-muted">
+                                            Latest {formatCurrency(item.latestUnitCost || item.cost || 0, currencySymbol)}
+                                        </div>
+                                    </td>
+                                    <td className="text-muted text-sm">
+                                        <div>{item.supplier || '-'}</div>
+                                        <div className="text-xs text-muted">
+                                            {formatPurchaseDate(item.lastPurchaseAt)}
+                                        </div>
+                                    </td>
                                     {canManageInventory && (
                                         <td>
                                             <div className="flex gap-2">
@@ -372,6 +514,47 @@ function InventoryPageContent() {
                         )}
                     </tbody>
                 </table>
+            </div>
+
+            <div className="card mt-4">
+                <div className="card-header">
+                    <div>
+                        <h3 className="card-title">Recent Ingredient Purchases</h3>
+                        <p className="card-subtitle">These entries power weekly and monthly cost analysis.</p>
+                    </div>
+                </div>
+                <div style={{ overflowX: 'auto' }}>
+                    <table className="data-table">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Ingredient</th>
+                                <th>Quantity</th>
+                                <th>Unit Cost</th>
+                                <th>Total Cost</th>
+                                <th>Supplier</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {purchaseSummary.recentPurchases.map((purchase) => (
+                                <tr key={purchase.id}>
+                                    <td>{formatPurchaseDate(purchase.purchasedAt).replace('Bought ', '')}</td>
+                                    <td>
+                                        <div className="font-bold">{purchase.inventoryName}</div>
+                                        {purchase.notes ? <div className="text-xs text-muted">{purchase.notes}</div> : null}
+                                    </td>
+                                    <td>{purchase.quantity} {purchase.unit}</td>
+                                    <td>{formatCurrency(purchase.unitCost, currencySymbol)}</td>
+                                    <td className="font-bold">{formatCurrency(purchase.totalCost, currencySymbol)}</td>
+                                    <td>{purchase.supplier || '-'}</td>
+                                </tr>
+                            ))}
+                            {purchaseSummary.recentPurchases.length === 0 && (
+                                <tr><td colSpan={6} className="empty-state">No ingredient purchases logged yet.</td></tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
             </div>
 
             {isModalOpen && (
@@ -444,6 +627,78 @@ function InventoryPageContent() {
 
                             <button type="submit" className="btn btn-primary justify-center" style={{ padding: 12 }} disabled={saving}>
                                 {saving ? 'Saving…' : form.id ? 'Save Changes' : 'Create Inventory Item'}
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {isPurchaseModalOpen && (
+                <div className="modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 24 }}>
+                    <div className="card" style={{ width: '100%', maxWidth: 560, position: 'relative' }}>
+                        <button onClick={() => setIsPurchaseModalOpen(false)} style={{ position: 'absolute', top: 16, right: 16, background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                            <X size={18} />
+                        </button>
+                        <h3 className="card-title mb-4">Log Ingredient Purchase</h3>
+
+                        <form onSubmit={submitPurchase} className="flex flex-col gap-4">
+                            <div>
+                                <label className="block text-sm text-muted mb-1" htmlFor="purchase-inventory-id">Ingredient</label>
+                                <select
+                                    id="purchase-inventory-id"
+                                    className="form-input"
+                                    value={purchaseForm.inventoryId}
+                                    onChange={e => setPurchaseForm({ ...purchaseForm, inventoryId: e.target.value })}
+                                    required
+                                >
+                                    <option value="" disabled>Select an ingredient</option>
+                                    {items.map((item) => (
+                                        <option key={item.id} value={item.id}>{item.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div className="grid-2 gap-4">
+                                <div>
+                                    <label className="block text-sm text-muted mb-1" htmlFor="purchase-quantity">Quantity Bought</label>
+                                    <input id="purchase-quantity" required type="number" step="0.01" className="form-input" value={purchaseForm.quantity} onChange={e => setPurchaseForm({ ...purchaseForm, quantity: e.target.value })} />
+                                </div>
+                                <div>
+                                    <label className="block text-sm text-muted mb-1" htmlFor="purchase-unit-cost">Unit Cost</label>
+                                    <input id="purchase-unit-cost" required type="number" step="0.01" className="form-input" value={purchaseForm.unitCost} onChange={e => setPurchaseForm({ ...purchaseForm, unitCost: e.target.value })} />
+                                </div>
+                            </div>
+
+                            <div className="grid-2 gap-4">
+                                <div>
+                                    <label className="block text-sm text-muted mb-1" htmlFor="purchase-logged-date">Logged Date</label>
+                                    <input id="purchase-logged-date" type="date" className="form-input" value={purchaseForm.loggedAt} readOnly disabled />
+                                </div>
+                                <div>
+                                    <label className="block text-sm text-muted mb-1" htmlFor="purchase-supplier">Supplier</label>
+                                    <input id="purchase-supplier" type="text" className="form-input" value={purchaseForm.supplier} onChange={e => setPurchaseForm({ ...purchaseForm, supplier: e.target.value })} />
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm text-muted mb-1" htmlFor="purchase-actual-date">Actual Purchase Date</label>
+                                <input
+                                    id="purchase-actual-date"
+                                    type="date"
+                                    className="form-input"
+                                    value={purchaseForm.actualPurchasedAt}
+                                    onChange={e => setPurchaseForm({ ...purchaseForm, actualPurchasedAt: e.target.value })}
+                                />
+                                <div className="text-xs text-muted mt-1">Leave blank to use today&apos;s logged date.</div>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm text-muted mb-1" htmlFor="purchase-notes">Notes</label>
+                                <textarea id="purchase-notes" className="form-input" value={purchaseForm.notes} onChange={e => setPurchaseForm({ ...purchaseForm, notes: e.target.value })} rows={3} />
+                            </div>
+
+                            <button type="submit" className="btn btn-primary justify-center" style={{ padding: 12 }} disabled={saving}>
+                                {saving ? 'Saving…' : 'Record Purchase'}
                             </button>
                         </form>
                     </div>

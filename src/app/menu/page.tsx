@@ -23,6 +23,7 @@ type MenuItem = {
     categoryId: string;
     isPopular: boolean;
     category?: Category;
+    extraOptions?: ExtraOption[];
 };
 
 type InventoryItem = {
@@ -34,6 +35,14 @@ type InventoryItem = {
 type RecipeIngredient = {
     id: string;
     inventoryId: string;
+    quantityUsed: number;
+    inventory?: InventoryItem;
+};
+
+type ExtraOption = {
+    id: string;
+    inventoryId: string;
+    label: string;
     quantityUsed: number;
     inventory?: InventoryItem;
 };
@@ -53,10 +62,26 @@ type IngredientDraft = {
     quantityUsed: string;
 };
 
+type ExtraDraft = {
+    id: string;
+    inventoryId: string;
+    label: string;
+    quantityUsed: string;
+};
+
 function createIngredientDraft(): IngredientDraft {
     return {
         id: Math.random().toString(36).slice(2, 11),
         inventoryId: '',
+        quantityUsed: '',
+    };
+}
+
+function createExtraDraft(): ExtraDraft {
+    return {
+        id: Math.random().toString(36).slice(2, 11),
+        inventoryId: '',
+        label: '',
         quantityUsed: '',
     };
 }
@@ -75,6 +100,7 @@ export default function MenuPage() {
     const [isItemModalOpen, setIsItemModalOpen] = useState(false);
     const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
     const [showRecipeEditor, setShowRecipeEditor] = useState(false);
+    const [showExtrasEditor, setShowExtrasEditor] = useState(false);
 
     // Form States
     const [itemForm, setItemForm] = useState<ItemFormState>({ id: '', name: '', description: '', price: 0, cost: 0, categoryId: '' });
@@ -82,6 +108,8 @@ export default function MenuPage() {
     const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
     const [recipeIngredients, setRecipeIngredients] = useState<RecipeIngredient[]>([]);
     const [ingredientDrafts, setIngredientDrafts] = useState<IngredientDraft[]>([createIngredientDraft()]);
+    const [extraOptions, setExtraOptions] = useState<ExtraOption[]>([]);
+    const [extraDrafts, setExtraDrafts] = useState<ExtraDraft[]>([createExtraDraft()]);
     const canManageMenu = user?.role === 'admin' || user?.role === 'manager';
 
     const buildItemPayload = () => ({
@@ -130,6 +158,20 @@ export default function MenuPage() {
             setRecipeIngredients(data);
         } catch (error) {
             toast('error', error instanceof Error ? error.message : 'Failed to load recipe');
+        }
+    };
+
+    const loadExtraOptions = async (itemId: string) => {
+        try {
+            const res = await fetch(`/api/menu/${itemId}/extras`);
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data.error || 'Failed to load extras');
+            }
+            const data = await res.json();
+            setExtraOptions(Array.isArray(data) ? data : []);
+        } catch (error) {
+            toast('error', error instanceof Error ? error.message : 'Failed to load extras');
         }
     };
 
@@ -182,9 +224,11 @@ export default function MenuPage() {
             if (openRecipeAfterSave) {
                 await loadRecipeIngredients(savedItem.id);
                 setShowRecipeEditor(true);
+                await loadExtraOptions(savedItem.id);
             } else {
                 setIsItemModalOpen(false);
                 setShowRecipeEditor(false);
+                setShowExtrasEditor(false);
             }
 
             fetchData();
@@ -253,6 +297,114 @@ export default function MenuPage() {
         await loadRecipeIngredients(itemId);
         resetIngredientDrafts();
         setShowRecipeEditor(true);
+    };
+
+    const updateExtraDraft = (draftId: string, updates: Partial<ExtraDraft>) => {
+        setExtraDrafts((prev) => prev.map((draft) => draft.id === draftId ? { ...draft, ...updates } : draft));
+    };
+
+    const addExtraDraftRow = () => {
+        setExtraDrafts((prev) => [...prev, createExtraDraft()]);
+    };
+
+    const removeExtraDraftRow = (draftId: string) => {
+        setExtraDrafts((prev) => {
+            const remaining = prev.filter((draft) => draft.id !== draftId);
+            return remaining.length > 0 ? remaining : [createExtraDraft()];
+        });
+    };
+
+    const resetExtraDrafts = () => {
+        setExtraDrafts([createExtraDraft()]);
+    };
+
+    const handleOpenExtrasEditor = async () => {
+        const itemId = itemForm.id;
+
+        if (!itemId) {
+            const savedItem = await saveItem(false);
+            if (!savedItem) return;
+            await loadExtraOptions(savedItem.id);
+            resetExtraDrafts();
+            setShowExtrasEditor(true);
+            setIsItemModalOpen(true);
+            return;
+        }
+
+        setSelectedItem({
+            id: itemId,
+            name: itemForm.name,
+            description: itemForm.description,
+            price: itemForm.price,
+            cost: itemForm.cost,
+            categoryId: itemForm.categoryId,
+            isPopular: false,
+        });
+        await loadExtraOptions(itemId);
+        resetExtraDrafts();
+        setShowExtrasEditor(true);
+    };
+
+    const handleSaveExtraDrafts = async () => {
+        if (!selectedItem) return;
+
+        const activeDrafts = extraDrafts.filter((draft) => draft.inventoryId.trim() || draft.label.trim() || draft.quantityUsed.trim());
+
+        const sanitizedDrafts = activeDrafts
+            .map((draft) => ({
+                inventoryId: draft.inventoryId.trim(),
+                label: draft.label.trim(),
+                quantityUsed: Number(draft.quantityUsed),
+            }))
+            .filter((draft) => draft.inventoryId || draft.label || Number.isFinite(draft.quantityUsed));
+
+        if (sanitizedDrafts.length === 0) {
+            toast('error', 'Add at least one extra');
+            return;
+        }
+
+        if (sanitizedDrafts.some((draft) => !draft.inventoryId || !draft.label)) {
+            toast('error', 'Select an inventory item and enter a label for each extra');
+            return;
+        }
+
+        if (sanitizedDrafts.some((draft) => !Number.isFinite(draft.quantityUsed) || draft.quantityUsed <= 0)) {
+            toast('error', 'Enter a valid quantity for each extra');
+            return;
+        }
+
+        try {
+            const res = await fetch(`/api/menu/${selectedItem.id}/extras`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ extras: sanitizedDrafts })
+            });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data.error || 'Failed to save extras');
+            }
+
+            const savedExtras = await res.json();
+            const updates = Array.isArray(savedExtras) ? savedExtras : [savedExtras];
+            setExtraOptions((prev) => {
+                const next = [...prev];
+
+                updates.forEach((updated) => {
+                    const exists = next.findIndex((extra) => extra.id === updated.id || extra.label === updated.label);
+                    if (exists > -1) {
+                        next[exists] = updated;
+                    } else {
+                        next.push(updated);
+                    }
+                });
+
+                return next;
+            });
+            resetExtraDrafts();
+            toast('success', `${updates.length} extra option${updates.length === 1 ? '' : 's'} saved`);
+        } catch (error) {
+            toast('error', error instanceof Error ? error.message : 'Failed to save extras');
+        }
     };
 
     const updateIngredientDraft = (draftId: string, updates: Partial<IngredientDraft>) => {
@@ -346,7 +498,10 @@ export default function MenuPage() {
         setSelectedItem(null);
         setRecipeIngredients([]);
         resetIngredientDrafts();
+        setExtraOptions([]);
+        resetExtraDrafts();
         setShowRecipeEditor(false);
+        setShowExtrasEditor(false);
         setIsItemModalOpen(true);
     };
 
@@ -362,7 +517,10 @@ export default function MenuPage() {
         setSelectedItem(item);
         setRecipeIngredients([]);
         resetIngredientDrafts();
+        setExtraOptions(Array.isArray((item as MenuItem & { extraOptions?: ExtraOption[] }).extraOptions) ? (item as MenuItem & { extraOptions?: ExtraOption[] }).extraOptions || [] : []);
+        resetExtraDrafts();
         setShowRecipeEditor(false);
+        setShowExtrasEditor(false);
         setIsItemModalOpen(true);
     };
 
@@ -383,6 +541,26 @@ export default function MenuPage() {
             toast('success', 'Ingredient removed');
         } catch (error) {
             toast('error', error instanceof Error ? error.message : 'Failed to remove ingredient');
+        }
+    };
+
+    const handleRemoveExtra = async (id: string) => {
+        if (!selectedItem) return;
+        try {
+            const res = await fetch(`/api/menu/${selectedItem.id}/extras`, {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ extraOptionId: id })
+            });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data.error || 'Failed to remove extra');
+            }
+
+            setExtraOptions((prev) => prev.filter((extra) => extra.id !== id));
+            toast('success', 'Extra removed');
+        } catch (error) {
+            toast('error', error instanceof Error ? error.message : 'Failed to remove extra');
         }
     };
 
@@ -534,6 +712,27 @@ export default function MenuPage() {
                                 )}
                             </div>
 
+                            <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+                                <div className="flex items-center justify-between gap-3">
+                                    <div>
+                                        <div className="font-bold flex items-center gap-2">
+                                            <Plus size={16} className="text-primary" /> Allowed Extras
+                                        </div>
+                                        <div className="text-sm text-muted">
+                                            These become structured add-ons the waiter can apply during customization.
+                                        </div>
+                                    </div>
+                                    <button type="button" className="btn btn-secondary" onClick={handleOpenExtrasEditor}>
+                                        <Plus size={16} /> {showExtrasEditor ? 'Refresh Extras' : 'Extras'}
+                                    </button>
+                                </div>
+                                {!itemForm.id && (
+                                    <div className="text-xs text-muted mt-3">
+                                        Selecting `Extras` will save this item first, then open the extra-options editor here.
+                                    </div>
+                                )}
+                            </div>
+
                             {showRecipeEditor && (
                                 <div className="bg-white/5 rounded-lg p-4 border border-white/10">
                                     <div className="mb-6">
@@ -607,6 +806,101 @@ export default function MenuPage() {
                                                             <div className="text-xs text-muted">Deducts {ri.quantityUsed} {ri.inventory?.unit} per order</div>
                                                         </div>
                                                         <button type="button" className="btn btn-icon btn-ghost text-danger" onClick={() => handleRemoveIngredient(ri.id)}>
+                                                            <Trash2 size={16} />
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {showExtrasEditor && (
+                                <div className="bg-white/5 rounded-lg p-4 border border-white/10">
+                                    <div className="mb-6">
+                                        <h3 className="text-sm font-bold mb-1 flex items-center gap-2">
+                                            <Plus size={16} className="text-primary" /> Allowed Extras: {selectedItem?.name || itemForm.name}
+                                        </h3>
+                                        <p className="text-sm text-muted">Waiters can add these extras at order time, and inventory will be deducted accordingly.</p>
+                                    </div>
+
+                                    <div className="bg-white/5 rounded-lg p-4 mb-6 border border-white/10">
+                                        <div className="flex items-center justify-between gap-3 mb-3">
+                                            <h3 className="text-sm font-bold flex items-center gap-2"><Plus size={14} /> Add Extra Options</h3>
+                                            <button type="button" className="btn btn-secondary" onClick={addExtraDraftRow}>
+                                                <Plus size={16} /> Add Row
+                                            </button>
+                                        </div>
+                                        <div className="flex flex-col gap-3">
+                                            {extraDrafts.map((draft, index) => (
+                                                <div key={draft.id} className="recipe-add-row extra-add-row">
+                                                    <select
+                                                        className="form-input"
+                                                        value={draft.inventoryId}
+                                                        onChange={e => {
+                                                            const inventoryItem = inventory.find((item) => item.id === e.target.value);
+                                                            updateExtraDraft(draft.id, {
+                                                                inventoryId: e.target.value,
+                                                                label: draft.label || inventoryItem?.name || '',
+                                                            });
+                                                        }}
+                                                    >
+                                                        <option value="">Select inventory item...</option>
+                                                        {inventory.map(i => (
+                                                            <option key={i.id} value={i.id}>{i.name} ({i.unit})</option>
+                                                        ))}
+                                                    </select>
+                                                    <input
+                                                        className="form-input"
+                                                        placeholder="Label for waiter"
+                                                        value={draft.label}
+                                                        onChange={e => updateExtraDraft(draft.id, { label: e.target.value })}
+                                                    />
+                                                    <div className="recipe-quantity-field">
+                                                        <input
+                                                            type="number"
+                                                            step="0.001"
+                                                            className="form-input"
+                                                            placeholder="Qty"
+                                                            value={draft.quantityUsed}
+                                                            onChange={e => updateExtraDraft(draft.id, { quantityUsed: e.target.value })}
+                                                        />
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        className="btn btn-icon btn-ghost"
+                                                        onClick={() => removeExtraDraftRow(draft.id)}
+                                                        title={extraDrafts.length === 1 ? 'Clear row' : `Remove extra row ${index + 1}`}
+                                                    >
+                                                        <Trash2 size={16} />
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        <div className="flex justify-end mt-4">
+                                            <button type="button" className="btn btn-primary" onClick={handleSaveExtraDrafts}>
+                                                <Save size={16} /> Save Extras
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div className="recipe-list">
+                                        <h3 className="text-sm font-bold mb-3 text-muted">CURRENT EXTRA OPTIONS</h3>
+                                        {extraOptions.length === 0 ? (
+                                            <div className="text-center p-8 border border-dashed border-white/10 rounded-lg text-muted text-sm">
+                                                <Info className="mx-auto mb-2 opacity-20" size={32} />
+                                                No extras linked yet. Waiters will only be able to remove items from the base recipe.
+                                            </div>
+                                        ) : (
+                                            <div className="flex flex-col gap-2">
+                                                {extraOptions.map(extra => (
+                                                    <div key={extra.id} className="flex justify-between items-center p-3 bg-white/5 rounded-lg border border-white/5">
+                                                        <div>
+                                                            <div className="font-bold">{extra.label}</div>
+                                                            <div className="text-xs text-muted">{extra.inventory?.name} • Uses {extra.quantityUsed} {extra.inventory?.unit}</div>
+                                                        </div>
+                                                        <button type="button" className="btn btn-icon btn-ghost text-danger" onClick={() => handleRemoveExtra(extra.id)}>
                                                             <Trash2 size={16} />
                                                         </button>
                                                     </div>
@@ -704,6 +998,9 @@ export default function MenuPage() {
                     gap: 0.5rem;
                     align-items: stretch;
                 }
+                .extra-add-row {
+                    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 100px auto;
+                }
                 .recipe-quantity-field {
                     width: 100%;
                 }
@@ -717,6 +1014,9 @@ export default function MenuPage() {
                         grid-template-columns: minmax(0, 1fr);
                     }
                     .recipe-add-row {
+                        grid-template-columns: minmax(0, 1fr);
+                    }
+                    .extra-add-row {
                         grid-template-columns: minmax(0, 1fr);
                     }
                 }

@@ -25,7 +25,18 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (!data.name || !data.categoryId || !Number.isFinite(data.price)) {
         return NextResponse.json({ error: 'Name, category, and a valid price are required' }, { status: 400 });
     }
-    const item = await prisma.menuItem.update({ where: { id }, data, include: { category: true } });
+    const item = await prisma.menuItem.update({
+        where: { id },
+        data,
+        include: {
+            category: true,
+            extraOptions: {
+                where: { isActive: true },
+                include: { inventory: true },
+                orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+            },
+        },
+    });
     return NextResponse.json(item);
 }
 

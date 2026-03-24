@@ -1,7 +1,12 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { getMonimeCheckoutSession, getMonimePayment } from '@/lib/monime';
-import { activateOrderForService } from '@/lib/orders';
+import {
+  activateOrderForService,
+  isOperationalOrderStatus,
+  moveTableToCleaningIfNoActiveOrders,
+  shouldCloseOrderService,
+} from '@/lib/orders';
 
 type PrismaTx = Prisma.TransactionClient | PrismaClient;
 
@@ -91,21 +96,44 @@ async function applyAttemptStatusUpdateTx(tx: PrismaTx, params: {
   });
 
   if (params.attemptStatus === 'completed') {
-    await tx.order.update({
+    const shouldCompleteOrder = shouldCloseOrderService(updatedAttempt.order);
+    const updatedOrder = await tx.order.update({
       where: { id: updatedAttempt.orderId },
       data: {
         paymentMethod: 'monime',
         paymentStatus: 'paid',
+        ...(shouldCompleteOrder
+          ? {
+            status: 'completed',
+            serviceEndedAt: updatedAttempt.order.serviceEndedAt || new Date(),
+          }
+          : {}),
       },
     });
-    await activateOrderForService(tx, updatedAttempt.orderId);
+
+    if (shouldCompleteOrder) {
+      await moveTableToCleaningIfNoActiveOrders(tx, updatedOrder.tableId);
+    } else {
+      await activateOrderForService(tx, updatedAttempt.orderId);
+    }
   } else {
+    const orderIsOperational = isOperationalOrderStatus(updatedAttempt.order.status);
     await tx.order.update({
       where: { id: updatedAttempt.orderId },
       data: {
-        paymentMethod: 'monime',
+        paymentMethod: params.attemptStatus === 'processing'
+          ? 'monime'
+          : orderIsOperational
+            ? null
+            : 'monime',
         paymentStatus: mapOrderPaymentStatus(params.attemptStatus),
-        status: params.attemptStatus === 'processing' ? 'payment_pending_confirmation' : params.attemptStatus === 'cancelled' ? 'draft' : undefined,
+        status: orderIsOperational
+          ? undefined
+          : params.attemptStatus === 'processing'
+            ? 'payment_pending_confirmation'
+            : params.attemptStatus === 'cancelled'
+              ? 'draft'
+              : undefined,
       },
     });
   }

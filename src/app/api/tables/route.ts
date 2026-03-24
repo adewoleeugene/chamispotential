@@ -10,8 +10,16 @@ export async function GET(req: NextRequest) {
         orderBy: { number: 'asc' },
         include: {
             orders: {
-                where: { status: { in: ['draft', 'payment_pending_confirmation', 'pending', 'preparing', 'ready'] } },
-                include: { items: { include: { menuItem: true } } },
+                where: { status: { in: ['draft', 'payment_pending_confirmation', 'pending', 'preparing', 'ready', 'served'] } },
+                include: {
+                    items: {
+                        include: {
+                            menuItem: true,
+                            removals: true,
+                            additions: true,
+                        },
+                    },
+                },
                 orderBy: { createdAt: 'desc' },
             }
         }

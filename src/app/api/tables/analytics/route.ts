@@ -3,6 +3,7 @@ import { endOfDay, endOfMonth, endOfWeek, startOfDay, startOfMonth, startOfWeek,
 import { prisma } from '@/lib/prisma';
 import { getRequestUser } from '@/lib/auth';
 import { isRecognizedRevenueOrder } from '@/lib/revenue';
+import { getTableDisplayStatus } from '@/lib/table-status';
 
 type AnalyticsRange = 'day' | 'week' | 'month';
 
@@ -167,7 +168,12 @@ export async function GET(req: NextRequest) {
 
     const recognizedRevenueOrders = periodOrders.filter((order) => isRecognizedRevenueOrder(order));
     const totalRevenue = recognizedRevenueOrders.reduce((sum, order) => sum + (order.total || 0), 0);
-    const occupiedTables = tables.filter((table) => table.status === 'occupied').length;
+    const occupiedTables = tables.filter((table) => (
+        getTableDisplayStatus({
+            status: table.status,
+            activeOrderCount: currentOrderCountByTable[table.id] || 0,
+        }) === 'occupied'
+    )).length;
     const tablesWithSales = Object.values(byTable).filter((entry: any) => entry.ordersCount > 0).length;
 
     return NextResponse.json({

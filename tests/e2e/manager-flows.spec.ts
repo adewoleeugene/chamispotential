@@ -71,15 +71,24 @@ test.describe('manager flows', () => {
         await expect(page.getByText(itemName)).toHaveCount(0);
     });
 
-    test('manager reports page supports day week month filters', async ({ page }) => {
+    test('manager reports page supports day week month and custom filters', async ({ page }) => {
         await loginAsManager(page);
         await page.getByRole('link', { name: /reports/i }).click();
 
         await expect(page).toHaveURL(/\/reports$/);
         await expect(page.getByText('Executive Reports')).toBeVisible();
+        await expect(page.getByRole('button', { name: /purchase ledger csv/i })).toBeVisible();
+        await expect(page.getByLabel('Costing')).toBeVisible();
+        await expect(page.getByText('This Week')).toBeVisible();
+        await expect(page.getByText('This Month')).toBeVisible();
         await page.getByRole('button', { name: 'Day' }).click();
-        await expect(page.getByText(/Today Revenue|This Week Revenue|This Month Revenue/)).toBeVisible();
+        await expect(page.getByText(/Today Net Sales|This Week Net Sales|This Month Net Sales/)).toBeVisible();
+        await page.getByRole('button', { name: 'Custom' }).click();
+        await expect(page.getByLabel('Start')).toBeVisible();
+        await expect(page.getByLabel('End')).toBeVisible();
         await page.getByRole('button', { name: 'Month' }).click();
         await expect(page.getByText('Revenue Rhythm')).toBeVisible();
+        await expect(page.getByText('Purchases by Ingredient')).toBeVisible();
+        await expect(page.getByText('Cost Audit View')).toBeVisible();
     });
 });
