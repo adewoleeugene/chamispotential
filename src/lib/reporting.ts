@@ -13,12 +13,18 @@ import {
 } from 'date-fns';
 import type { ReportRange } from '@/lib/restaurant-analytics';
 
+type StandardReportRange = Exclude<ReportRange, 'custom'>;
+
 export type ReportRangeConfig = {
   range: ReportRange;
   label: string;
   start: Date;
   end: Date;
   chartLabel: string;
+};
+
+export type StandardReportRangeConfig = Omit<ReportRangeConfig, 'range'> & {
+  range: StandardReportRange;
 };
 
 function getValidDateParam(value: string | null) {
@@ -78,10 +84,13 @@ export function getReportRange(
   };
 }
 
-export function getComparisonRangeConfigs(now = new Date()) {
+export function getComparisonRangeConfigs(now = new Date()): {
+  week: StandardReportRangeConfig;
+  month: StandardReportRangeConfig;
+} {
   return {
-    week: getReportRange('week', now),
-    month: getReportRange('month', now),
+    week: getReportRange('week', now) as StandardReportRangeConfig,
+    month: getReportRange('month', now) as StandardReportRangeConfig,
   };
 }
 

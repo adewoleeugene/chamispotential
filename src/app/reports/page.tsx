@@ -1,5 +1,6 @@
 'use client';
 import React, { useEffect, useState, useTransition } from 'react';
+import type { CSSProperties } from 'react';
 import AppLayout from '@/components/AppLayout';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { BarChart3, Download, TrendingUp, TrendingDown, Target, CalendarDays, DollarSign, ShoppingCart, Clock3, ChefHat, DoorOpen } from 'lucide-react';
@@ -572,7 +573,7 @@ export default function ReportsPage() {
                         )}
 
                         {isAdmin ? (
-                            <div className="reports-costing-card" style={{ ['--report-accent' as const]: activeCostingGuide.accent }}>
+                            <div className="reports-costing-card" style={{ '--report-accent': activeCostingGuide.accent } as CSSProperties}>
                                 <div className="reports-costing-head">
                                     <div>
                                         <div className="reports-costing-label">Costing Method</div>
@@ -600,7 +601,7 @@ export default function ReportsPage() {
                                             onClick={() => updateCostMethod(item.key)}
                                             aria-pressed={item.key === costMethod}
                                             className={`reports-costing-option${item.key === costMethod ? ' is-active' : ''}`}
-                                            style={{ ['--report-option-accent' as const]: item.accent }}
+                                            style={{ '--report-option-accent': item.accent } as CSSProperties}
                                         >
                                             <div className="reports-costing-option-title">{item.label}</div>
                                             <div className="reports-costing-option-copy">
@@ -669,7 +670,7 @@ export default function ReportsPage() {
                         <div
                             key={card.label}
                             className="card reports-summary-card"
-                            style={{ ['--report-accent' as const]: card.accent }}
+                            style={{ '--report-accent': card.accent } as CSSProperties}
                         >
                             <div className="reports-summary-card-overlay" />
                             <div className="reports-summary-card-head">
@@ -805,7 +806,7 @@ export default function ReportsPage() {
                 {serviceStageCards.map((card) => {
                     const Icon = card.icon;
                     return (
-                        <div key={card.label} className="card reports-service-card" style={{ ['--report-accent' as const]: card.accent }}>
+                        <div key={card.label} className="card reports-service-card" style={{ '--report-accent': card.accent } as CSSProperties}>
                             <div className="reports-service-card-head">
                                 <div className="text-muted text-sm font-bold uppercase">{card.label}</div>
                                 <div className="reports-service-card-icon">
