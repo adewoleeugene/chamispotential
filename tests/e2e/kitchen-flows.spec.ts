@@ -135,5 +135,14 @@ test.describe('kitchen flows', () => {
         expect(persistedOrder.status).toBe('ready');
 
         await updateOrderAsWaiter(browser, createdOrder.orderId, 'served');
+
+        const servedOrder = await page.evaluate(async (orderId) => {
+            const response = await fetch(`/api/orders/${orderId}`);
+            return response.json();
+        }, createdOrder.orderId);
+
+        expect(servedOrder.status).toBe('completed');
+        expect(servedOrder.paymentStatus).toBe('paid');
+        expect(servedOrder.serviceEndedAt).toBeTruthy();
     });
 });

@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import Sidebar from '@/components/Sidebar';
-import { Bell, Check, Menu } from 'lucide-react';
+import { Bell, Check, Menu, ChefHat, ArrowRight } from 'lucide-react';
 
 type ReadyOrder = {
     id: string;
@@ -23,6 +23,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     const [readyOrders, setReadyOrders] = useState<ReadyOrder[]>([]);
     const [showNotifs, setShowNotifs] = useState(false);
     const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [sidebarOverlayVisible, setSidebarOverlayVisible] = useState(false);
+    const [highlightActiveOrders, setHighlightActiveOrders] = useState(false);
     const [headerDate, setHeaderDate] = useState('');
 
     useEffect(() => {
@@ -51,9 +53,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     }, [user]);
 
     useEffect(() => {
-        document.body.classList.toggle('menu-open', sidebarOpen);
+        document.body.classList.toggle('menu-open', sidebarOpen && sidebarOverlayVisible);
         return () => document.body.classList.remove('menu-open');
-    }, [sidebarOpen]);
+    }, [sidebarOpen, sidebarOverlayVisible]);
+
+    useEffect(() => {
+        if (!highlightActiveOrders) return;
+        const timeout = window.setTimeout(() => setHighlightActiveOrders(false), 2200);
+        return () => window.clearTimeout(timeout);
+    }, [highlightActiveOrders]);
 
     useEffect(() => {
         const formatter = new Intl.DateTimeFormat('en-US', {
@@ -112,16 +120,31 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
     const roleLabel = user.role.charAt(0).toUpperCase() + user.role.slice(1);
     const userInitials = user.name.split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase();
+    const nextReadyOrder = readyOrders[0] || null;
 
     return (
         <div className="app-layout">
-            <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+            <Sidebar
+                readyOrders={readyOrders}
+                highlightActiveOrders={highlightActiveOrders}
+                onServeReadyOrder={markAsServed}
+                showOverlay={sidebarOverlayVisible}
+                isOpen={sidebarOpen}
+                onClose={() => {
+                    setSidebarOpen(false);
+                    setSidebarOverlayVisible(false);
+                    setHighlightActiveOrders(false);
+                }}
+            />
             <main className="main-content">
                 <header className="header">
                     <div className="header-left">
                         <button
                             className="mobile-nav-toggle"
-                            onClick={() => setSidebarOpen(true)}
+                            onClick={() => {
+                                setSidebarOverlayVisible(true);
+                                setSidebarOpen(true);
+                            }}
                             aria-label="Open navigation"
                         >
                             <Menu size={18} />
@@ -192,6 +215,46 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                         </div>
                     </div>
                 </header>
+                {user?.role === 'waiter' && readyOrders.length > 0 && (
+                    <div className="waiter-ready-banner">
+                        <div className="waiter-ready-banner-copy">
+                            <div className="waiter-ready-banner-kicker">
+                                <ChefHat size={14} />
+                                Kitchen Alert
+                            </div>
+                            <div className="waiter-ready-banner-title">
+                                {readyOrders.length === 1
+                                    ? `Order #${nextReadyOrder?.orderNumber} is ready for pickup`
+                                    : `${readyOrders.length} orders are ready for pickup`}
+                            </div>
+                            <div className="waiter-ready-banner-detail">
+                                {readyOrders.length === 1
+                                    ? (nextReadyOrder?.type === 'dine-in'
+                                        ? `Collect from kitchen and serve Table ${nextReadyOrder.table?.number}.`
+                                        : 'Collect from kitchen and hand off the takeaway order.')
+                                    : 'Open the bell or view the ready orders in the sidebar to clear the ready stack.'}
+                            </div>
+                        </div>
+                        <div className="waiter-ready-banner-actions">
+                            {readyOrders.length === 1 && nextReadyOrder && (
+                                <button type="button" className="waiter-ready-banner-button" onClick={() => markAsServed(nextReadyOrder.id)}>
+                                    <Check size={14} /> Mark picked up
+                                </button>
+                            )}
+                            <button
+                                type="button"
+                                className="waiter-ready-banner-link"
+                                onClick={() => {
+                                    setSidebarOverlayVisible(false);
+                                    setSidebarOpen(true);
+                                    setHighlightActiveOrders(true);
+                                }}
+                            >
+                                View orders <ArrowRight size={14} />
+                            </button>
+                        </div>
+                    </div>
+                )}
                 <div className="page-content">
                     {children}
                 </div>

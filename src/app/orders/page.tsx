@@ -1,5 +1,5 @@
 'use client';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/contexts/AuthContext';
@@ -8,17 +8,21 @@ import { useSettings } from '@/contexts/SettingsContext';
 import { ResponsiveContainer, BarChart as RevenueChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { Search, Plus, Minus, Trash2, CreditCard, BarChart3, DollarSign, ShoppingCart } from 'lucide-react';
 import { formatCurrency } from '@/lib/currency';
-import PaymentFlowSelector from '@/components/PaymentFlowSelector';
 import { getDefaultRouteForRole } from '@/lib/roleRoutes';
 import {
     getOrderPaymentConfig,
     isManualPaymentMethod,
-    type ManualPaymentFlow,
-    type ManualPaymentMethod,
-    type PaymentChannel,
+    type BillingMode,
+    type DeferredPaymentMethod,
+    type PaymentMethod,
 } from '@/lib/payment-flow';
 
 type ManagerRange = 'day' | 'week' | 'month';
+type CheckoutPromptState =
+    | { kind: 'new_order_billing' }
+    | { kind: 'new_order_payment_method' }
+    | { kind: 'open_bill_payment_method'; orderId: string; totalAmount: number }
+    | null;
 
 export default function OrdersPage() {
     const { user, loading: authLoading } = useAuth();
@@ -31,6 +35,9 @@ export default function OrdersPage() {
     const [managerRange, setManagerRange] = useState<ManagerRange>('week');
     const [managerData, setManagerData] = useState<any>(null);
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
+    const [isFilterPending, startFilterTransition] = useTransition();
+    const hasLoadedManagerViewRef = useRef(false);
     const toast = useToast();
 
     const [activeCategory, setActiveCategory] = useState<string>('all');
@@ -41,12 +48,9 @@ export default function OrdersPage() {
     const [orderType, setOrderType] = useState('dine-in');
     const [customerName, setCustomerName] = useState('');
     const [discount, setDiscount] = useState(0);
-    const [paymentChannel, setPaymentChannel] = useState<PaymentChannel>('manual');
-    const [manualPaymentMethod, setManualPaymentMethod] = useState<ManualPaymentMethod>('cash');
-    const [manualPaymentFlow, setManualPaymentFlow] = useState<ManualPaymentFlow>('settle_now');
     const [submitting, setSubmitting] = useState(false);
     const [confirmingPayment, setConfirmingPayment] = useState(false);
-    const [paymentConfirmData, setPaymentConfirmData] = useState<{ id: string, method: ManualPaymentMethod, totalAmount: number } | null>(null);
+    const [checkoutPrompt, setCheckoutPrompt] = useState<CheckoutPromptState>(null);
 
     useEffect(() => {
         if (authLoading || !user) return;
@@ -56,12 +60,18 @@ export default function OrdersPage() {
             return;
         }
 
-        setLoading(true);
+        if (hasLoadedManagerViewRef.current) {
+            setRefreshing(true);
+        } else {
+            setLoading(true);
+        }
         fetch(`/api/reports?range=${managerRange}`)
             .then(r => r.json())
             .then((reportData) => {
                 setManagerData(reportData);
                 setLoading(false);
+                setRefreshing(false);
+                hasLoadedManagerViewRef.current = true;
 
                 // Reset waiter-specific state when a manager lands here after a role switch.
                 setCategories([]);
@@ -72,6 +82,7 @@ export default function OrdersPage() {
             .catch(() => {
                 setManagerData(null);
                 setLoading(false);
+                setRefreshing(false);
                 toast('error', 'Failed to load manager order analytics');
             });
     }, [authLoading, managerRange, router, toast, user]);
@@ -121,8 +132,32 @@ export default function OrdersPage() {
         if (Array.isArray(data)) setOrders(data);
     };
 
+    const resetOrderComposer = () => {
+        setCart([]);
+        setSelectedTable('');
+        setCustomerName('');
+        setDiscount(0);
+        setOrderType('dine-in');
+    };
+
+    const startMonimeCheckout = async (payload: Record<string, unknown>) => {
+        const res = await fetch('/api/payments/monime/checkout', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json().catch(() => null);
+
+        if (!res.ok || !data?.redirectUrl) {
+            throw new Error(data?.error || 'Failed to start Monime checkout');
+        }
+
+        toast('info', 'Redirecting to Monime checkout...');
+        window.location.href = data.redirectUrl;
+    };
+
     const confirmManualPayment = async (orderId: string, methodOverride?: string) => {
-        let storedMethod = methodOverride as ManualPaymentMethod | undefined;
+        let storedMethod = methodOverride as DeferredPaymentMethod | undefined;
         if (!storedMethod) {
             const orderObj = orders.find((o: any) => o.id === orderId);
             storedMethod = isManualPaymentMethod(orderObj?.paymentMethod) ? orderObj?.paymentMethod : 'cash';
@@ -142,8 +177,8 @@ export default function OrdersPage() {
                 throw new Error(data?.error || 'Failed to confirm payment');
             }
 
-            toast('success', 'Cash received confirmed and order sent to kitchen');
-            setPaymentConfirmData(null);
+            toast('success', 'Payment recorded successfully');
+            setCheckoutPrompt(null);
             await refreshOrders();
             const tablesRes = await fetch('/api/tables');
             const tablesData = await tablesRes.json();
@@ -155,16 +190,16 @@ export default function OrdersPage() {
         }
     };
 
-    const submitOrder = async () => {
+    const submitOrder = async (decision: { billingMode: BillingMode; paymentMethod?: PaymentMethod }) => {
         if (cart.length === 0) return toast('error', 'Cart is empty');
         if (orderType === 'dine-in' && !selectedTable) return toast('error', 'Select a table for dine-in');
         setSubmitting(true);
 
-        const paymentConfig = getOrderPaymentConfig({
-            paymentChannel,
-            manualPaymentMethod,
-            manualPaymentFlow,
-        });
+        const paymentConfig = getOrderPaymentConfig(
+            decision.billingMode === 'open_tab'
+                ? { billingMode: 'open_tab' }
+                : { billingMode: 'pay_now', paymentMethod: decision.paymentMethod || 'cash' }
+        );
 
         const payload = {
             tableId: selectedTable || null,
@@ -176,20 +211,8 @@ export default function OrdersPage() {
         };
 
         try {
-            if (paymentChannel === 'monime') {
-                const res = await fetch('/api/payments/monime/checkout', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                const data = await res.json();
-
-                if (!res.ok || !data.redirectUrl) {
-                    throw new Error(data.error || 'Failed to start Monime checkout');
-                }
-
-                toast('info', 'Redirecting to Monime checkout...');
-                window.location.href = data.redirectUrl;
+            if (decision.billingMode === 'pay_now' && decision.paymentMethod === 'monime') {
+                await startMonimeCheckout(payload);
                 return;
             }
 
@@ -202,34 +225,16 @@ export default function OrdersPage() {
             if (!res.ok) {
                 throw new Error('Failed to create order');
             }
-            const createdOrder = await res.json();
-
-            if (manualPaymentFlow === 'settle_now') {
-                setPaymentConfirmData({ id: createdOrder.id, method: manualPaymentMethod, totalAmount: total });
-                setCart([]);
-                setSelectedTable('');
-                setCustomerName('');
-                setDiscount(0);
-                setOrderType('dine-in');
-                setPaymentChannel('manual');
-                setManualPaymentMethod('cash');
-                setManualPaymentFlow('settle_now');
-                await refreshOrders();
-                return;
-            }
+            await res.json();
 
             toast(
                 'success',
-                'Open tab saved. Settle it later from Pending Checkout.'
+                decision.billingMode === 'open_tab'
+                    ? 'Order sent to kitchen. The tab will stay open until the guest is ready to pay.'
+                    : 'Payment recorded and order sent to kitchen.'
             );
-            setCart([]);
-            setSelectedTable('');
-            setCustomerName('');
-            setDiscount(0);
-            setOrderType('dine-in');
-            setPaymentChannel('manual');
-            setManualPaymentMethod('cash');
-            setManualPaymentFlow('settle_now');
+            setCheckoutPrompt(null);
+            resetOrderComposer();
             await refreshOrders();
             const tablesRes = await fetch('/api/tables');
             const tablesData = await tablesRes.json();
@@ -241,7 +246,29 @@ export default function OrdersPage() {
         }
     };
 
-    if (authLoading || !user || loading) {
+    const settleOpenBillWithMonime = async (orderId: string) => {
+        setSubmitting(true);
+        try {
+            await startMonimeCheckout({ orderId });
+        } catch (error) {
+            toast('error', error instanceof Error ? error.message : 'Failed to start Monime checkout');
+            setSubmitting(false);
+        }
+    };
+
+    const openPlaceOrderPrompt = () => {
+        if (cart.length === 0) {
+            toast('error', 'Cart is empty');
+            return;
+        }
+        if (orderType === 'dine-in' && !selectedTable) {
+            toast('error', 'Select a table for dine-in');
+            return;
+        }
+        setCheckoutPrompt({ kind: 'new_order_billing' });
+    };
+
+    if (authLoading || !user || (loading && !managerData)) {
         return <AppLayout><div className="loading-spinner" style={{ margin: '100px auto' }} /></AppLayout>;
     }
 
@@ -276,26 +303,44 @@ export default function OrdersPage() {
                         </h2>
                         <p className="text-muted text-sm mt-1">Manager order analytics with filterable day, week, and month views.</p>
                     </div>
-                    <div style={{ display: 'inline-flex', padding: 4, borderRadius: 999, background: 'rgba(15,23,42,0.82)', border: '1px solid rgba(148,163,184,0.18)' }}>
-                        {(['day', 'week', 'month'] as ManagerRange[]).map((item) => (
-                            <button
-                                key={item}
-                                type="button"
-                                onClick={() => setManagerRange(item)}
-                                style={{
-                                    border: 'none',
-                                    borderRadius: 999,
-                                    background: managerRange === item ? 'rgba(56,189,248,0.16)' : 'transparent',
-                                    color: managerRange === item ? '#e0f2fe' : '#94a3b8',
-                                    padding: '10px 16px',
-                                    fontSize: 12,
-                                    fontWeight: 700,
-                                    cursor: 'pointer',
-                                }}
-                            >
-                                {item.charAt(0).toUpperCase() + item.slice(1)}
-                            </button>
-                        ))}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                        {(refreshing || isFilterPending) && (
+                            <span style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                padding: '6px 10px',
+                                borderRadius: 999,
+                                background: 'rgba(56,189,248,0.14)',
+                                color: '#bae6fd',
+                                fontSize: 11,
+                                fontWeight: 700,
+                                textTransform: 'uppercase',
+                                letterSpacing: 0.4,
+                            }}>
+                                Refreshing
+                            </span>
+                        )}
+                        <div style={{ display: 'inline-flex', padding: 4, borderRadius: 999, background: 'rgba(15,23,42,0.82)', border: '1px solid rgba(148,163,184,0.18)' }}>
+                            {(['day', 'week', 'month'] as ManagerRange[]).map((item) => (
+                                <button
+                                    key={item}
+                                    type="button"
+                                    onClick={() => startFilterTransition(() => setManagerRange(item))}
+                                    style={{
+                                        border: 'none',
+                                        borderRadius: 999,
+                                        background: managerRange === item ? 'rgba(56,189,248,0.16)' : 'transparent',
+                                        color: managerRange === item ? '#e0f2fe' : '#94a3b8',
+                                        padding: '10px 16px',
+                                        fontSize: 12,
+                                        fontWeight: 700,
+                                        cursor: 'pointer',
+                                    }}
+                                >
+                                    {item.charAt(0).toUpperCase() + item.slice(1)}
+                                </button>
+                            ))}
+                        </div>
                     </div>
                 </div>
 
@@ -412,7 +457,12 @@ export default function OrdersPage() {
         return <AppLayout><div className="loading-spinner" style={{ margin: '100px auto' }} /></AppLayout>;
     }
 
-    const pendingCheckoutOrders = orders.filter((order: any) => ['draft', 'payment_pending_confirmation'].includes(order.status));
+    const pendingCheckoutOrders = orders.filter((order: any) =>
+        order.status === 'payment_pending_confirmation'
+        || (order.paymentMethod !== 'monime'
+            && order.paymentStatus !== 'paid'
+            && ['pending', 'preparing', 'ready', 'served', 'completed', 'draft'].includes(order.status))
+    );
 
     return (
         <AppLayout>
@@ -480,15 +530,8 @@ export default function OrdersPage() {
                             )}
                         </div>
                         <div className="grid-2 gap-2 mt-2">
-                            <div style={{ gridColumn: '1 / -1' }}>
-                                <PaymentFlowSelector
-                                    paymentChannel={paymentChannel}
-                                    onPaymentChannelChange={setPaymentChannel}
-                                    manualPaymentMethod={manualPaymentMethod}
-                                    onManualPaymentMethodChange={setManualPaymentMethod}
-                                    manualPaymentFlow={manualPaymentFlow}
-                                    onManualPaymentFlowChange={setManualPaymentFlow}
-                                />
+                            <div style={{ gridColumn: '1 / -1', padding: '12px 14px', borderRadius: 14, border: '1px solid rgba(56,189,248,0.18)', background: 'rgba(14,165,233,0.08)', color: '#cbd5e1', fontSize: 13, lineHeight: 1.5 }}>
+                                Click place order first, then choose whether this guest is paying now or keeping the tab open until they are ready to leave.
                             </div>
                             <input
                                 aria-label="Discount"
@@ -507,10 +550,8 @@ export default function OrdersPage() {
                     <div className="cart-items">
                         {pendingCheckoutOrders.length > 0 && (
                             <div style={{ padding: '12px 0', borderBottom: '1px solid var(--border)' }}>
-                                <div style={{ fontSize: 11, textTransform: 'uppercase', fontWeight: 'bold', color: 'var(--text-secondary)', marginBottom: 8 }}>Pending Checkout</div>
+                                <div style={{ fontSize: 11, textTransform: 'uppercase', fontWeight: 'bold', color: 'var(--text-secondary)', marginBottom: 8 }}>Open Bills</div>
                                 {pendingCheckoutOrders.slice(0, 5).map((order: any) => {
-                                    const storedMethod = isManualPaymentMethod(order.paymentMethod) ? order.paymentMethod : 'cash';
-
                                     return (
                                         <div key={order.id} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 10, marginBottom: 8 }}>
                                             <div className="flex justify-between items-center" style={{ marginBottom: 6 }}>
@@ -520,9 +561,9 @@ export default function OrdersPage() {
                                             <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 8 }}>
                                                 {order.table?.number ? `Table ${order.table.number}` : order.customerName || order.type} • {formatCurrency(order.total, settings.currencySymbol)}
                                             </div>
-                                            {order.status === 'draft' ? (
-                                                <button className="btn btn-success w-full" onClick={() => confirmManualPayment(order.id, storedMethod)} style={{ justifyContent: 'center', padding: 10 }}>
-                                                    Confirm Cash Received & Send
+                                            {order.paymentStatus !== 'processing' ? (
+                                                <button className="btn btn-success w-full" onClick={() => setCheckoutPrompt({ kind: 'open_bill_payment_method', orderId: order.id, totalAmount: order.total })} style={{ justifyContent: 'center', padding: 10 }}>
+                                                    Settle Bill
                                                 </button>
                                             ) : (
                                                 <div style={{ fontSize: 12, color: '#38bdf8' }}>Waiting for Monime confirmation</div>
@@ -559,31 +600,74 @@ export default function OrdersPage() {
                             <div className="cart-total-row grand-total"><span>Total</span><span>{formatCurrency(total, settings.currencySymbol)}</span></div>
                         </div>
 
-                        <button className="btn btn-primary w-full" onClick={submitOrder} disabled={cart.length === 0 || submitting} style={{ padding: '12px', justifyContent: 'center', fontSize: 15 }}>
-                            <CreditCard size={18} /> {submitting ? 'Processing...' : paymentChannel === 'monime' ? 'Pay with Monime' : manualPaymentFlow === 'settle_now' ? 'Confirm Cash Received' : 'Save Open Tab'}
+                        <button className="btn btn-primary w-full" onClick={openPlaceOrderPrompt} disabled={cart.length === 0 || submitting} style={{ padding: '12px', justifyContent: 'center', fontSize: 15 }}>
+                            <CreditCard size={18} /> {submitting ? 'Processing...' : 'Place Order'}
                         </button>
                     </div>
                 </div>
             </div>
 
-            {paymentConfirmData && (
+            {checkoutPrompt && (
                 <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100, padding: 24 }}>
                     <div style={{ background: 'var(--bg-card)', padding: 32, borderRadius: 'var(--radius-lg)', width: 400, textAlign: 'center', border: '1px solid var(--border)' }}>
                         <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'rgba(56,189,248,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', color: '#38bdf8' }}>
                             <CreditCard size={32} />
                         </div>
-                        <h3 style={{ fontSize: 20, fontWeight: 'bold', marginBottom: 8 }}>Confirm Cash Received</h3>
-                        <p style={{ color: 'var(--text-secondary)', marginBottom: 24, fontSize: 14 }}>
-                            Has the waiter received {formatCurrency(paymentConfirmData.totalAmount, settings.currencySymbol)} in cash? Confirming will send the order to the kitchen.
-                        </p>
-                        <div style={{ display: 'flex', gap: 12 }}>
-                            <button className="btn btn-secondary w-full" type="button" disabled={confirmingPayment} onClick={() => { setPaymentConfirmData(null); }} style={{ padding: 12, justifyContent: 'center' }}>
-                                Cancel & Keep in Draft
-                            </button>
-                            <button className="btn btn-primary w-full" type="button" disabled={confirmingPayment} onClick={() => confirmManualPayment(paymentConfirmData.id, paymentConfirmData.method)} style={{ padding: 12, justifyContent: 'center' }}>
-                                {confirmingPayment ? 'Confirming...' : 'Confirm Cash Received'}
-                            </button>
-                        </div>
+                        {checkoutPrompt.kind === 'new_order_billing' ? (
+                            <>
+                                <h3 style={{ fontSize: 20, fontWeight: 'bold', marginBottom: 8 }}>How should this order be billed?</h3>
+                                <p style={{ color: 'var(--text-secondary)', marginBottom: 24, fontSize: 14 }}>
+                                    Choose whether to collect payment now or keep the tab open until the guest is ready to leave.
+                                </p>
+                                <div style={{ display: 'grid', gap: 12 }}>
+                                    <button className="btn btn-primary w-full" type="button" disabled={submitting} onClick={() => setCheckoutPrompt({ kind: 'new_order_payment_method' })} style={{ padding: 12, justifyContent: 'center' }}>
+                                        Pay Now
+                                    </button>
+                                    <button className="btn btn-secondary w-full" type="button" disabled={submitting} onClick={() => submitOrder({ billingMode: 'open_tab' })} style={{ padding: 12, justifyContent: 'center' }}>
+                                        Open Tab
+                                    </button>
+                                    <button className="btn w-full" type="button" disabled={submitting} onClick={() => setCheckoutPrompt(null)} style={{ padding: 12, justifyContent: 'center', background: 'var(--surface-active)' }}>
+                                        Cancel
+                                    </button>
+                                </div>
+                            </>
+                        ) : checkoutPrompt.kind === 'new_order_payment_method' ? (
+                            <>
+                                <h3 style={{ fontSize: 20, fontWeight: 'bold', marginBottom: 8 }}>How is the guest paying now?</h3>
+                                <p style={{ color: 'var(--text-secondary)', marginBottom: 24, fontSize: 14 }}>
+                                    Use cash if payment is already collected, or launch Monime checkout before sending the order to kitchen.
+                                </p>
+                                <div style={{ display: 'grid', gap: 12 }}>
+                                    <button className="btn btn-primary w-full" type="button" disabled={submitting} onClick={() => submitOrder({ billingMode: 'pay_now', paymentMethod: 'cash' })} style={{ padding: 12, justifyContent: 'center' }}>
+                                        Cash
+                                    </button>
+                                    <button className="btn btn-secondary w-full" type="button" disabled={submitting} onClick={() => submitOrder({ billingMode: 'pay_now', paymentMethod: 'monime' })} style={{ padding: 12, justifyContent: 'center' }}>
+                                        Monime
+                                    </button>
+                                    <button className="btn w-full" type="button" disabled={submitting} onClick={() => setCheckoutPrompt({ kind: 'new_order_billing' })} style={{ padding: 12, justifyContent: 'center', background: 'var(--surface-active)' }}>
+                                        Back
+                                    </button>
+                                </div>
+                            </>
+                        ) : (
+                            <>
+                                <h3 style={{ fontSize: 20, fontWeight: 'bold', marginBottom: 8 }}>Settle Open Bill</h3>
+                                <p style={{ color: 'var(--text-secondary)', marginBottom: 24, fontSize: 14 }}>
+                                    Choose how the guest is paying {formatCurrency(checkoutPrompt.totalAmount, settings.currencySymbol)} for this open tab.
+                                </p>
+                                <div style={{ display: 'grid', gap: 12 }}>
+                                    <button className="btn btn-primary w-full" type="button" disabled={confirmingPayment || submitting} onClick={() => confirmManualPayment(checkoutPrompt.orderId, 'cash')} style={{ padding: 12, justifyContent: 'center' }}>
+                                        {confirmingPayment ? 'Saving...' : 'Cash'}
+                                    </button>
+                                    <button className="btn btn-secondary w-full" type="button" disabled={confirmingPayment || submitting} onClick={() => settleOpenBillWithMonime(checkoutPrompt.orderId)} style={{ padding: 12, justifyContent: 'center' }}>
+                                        {submitting ? 'Redirecting...' : 'Monime'}
+                                    </button>
+                                    <button className="btn w-full" type="button" disabled={confirmingPayment || submitting} onClick={() => setCheckoutPrompt(null)} style={{ padding: 12, justifyContent: 'center', background: 'var(--surface-active)' }}>
+                                        Cancel
+                                    </button>
+                                </div>
+                            </>
+                        )}
                     </div>
                 </div>
             )}

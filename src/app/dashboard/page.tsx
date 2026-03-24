@@ -1,5 +1,5 @@
 'use client';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/contexts/AuthContext';
@@ -7,31 +7,105 @@ import { useSettings } from '@/contexts/SettingsContext';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { TrendingUp, Users, ShoppingBag, DollarSign, Clock, CheckCircle, Link, AlertTriangle, ArrowRight, BellRing, PackageSearch } from 'lucide-react';
 import { formatCurrency } from '@/lib/currency';
+import { TABLE_STATUS_COLORS } from '@/lib/table-status';
+
+type CostMethod = 'weighted_average_as_of_sale_date' | 'fifo' | 'lifo';
+
+type DashboardData = {
+    revenue: {
+        today: number;
+        month: number;
+        averageTicket: number;
+    };
+    finance: {
+        costMethod: CostMethod;
+        week: {
+            netSales: number;
+            ingredientSpend: number;
+            cogs: number;
+            grossProfit: number;
+            grossMarginPct: number;
+        };
+        month: {
+            netSales: number;
+            ingredientSpend: number;
+            cogs: number;
+            grossProfit: number;
+            grossMarginPct: number;
+        };
+    };
+    orders: {
+        today: number;
+        active: number;
+        ready: number;
+        pending: number;
+    };
+    customers: number;
+    tables: Record<string, number>;
+    activeTablesCount: number;
+    activeTablesList: Array<{ id: string; number: number; capacity: number; status: string; orders?: Array<{ id: string }> }>;
+    dailyRevenue: Array<{ date: string; netSales: number }>;
+    recentOrders: Array<{ id: string; orderNumber: number; createdAt: string; status: string; total: number; table: { number?: number | null; mergeGroupId?: string | null } | null }>;
+    topItems: Array<{ name: string; quantity: number }>;
+    lowInventory: Array<{ id: string; name: string; currentStock: number; unit: string }>;
+};
 
 export default function Dashboard() {
     const { user } = useAuth();
     const { settings } = useSettings();
     const router = useRouter();
-    const [data, setData] = useState<any>(null);
+    const [data, setData] = useState<DashboardData | null>(null);
     const [inventorySummary, setInventorySummary] = useState({ reorderNow: 0, reorderSoon: 0 });
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [costMethod, setCostMethod] = useState<CostMethod>('weighted_average_as_of_sale_date');
+    const [isFilterPending, startFilterTransition] = useTransition();
+    const isAdmin = user?.role === 'admin';
+    const isSyncing = refreshing || isFilterPending;
+    const tableStatusColors = TABLE_STATUS_COLORS;
+
+    const costMethodLabel = costMethod === 'weighted_average_as_of_sale_date'
+        ? 'Weighted Avg'
+        : costMethod === 'fifo'
+            ? 'FIFO'
+            : 'LIFO';
 
     useEffect(() => {
+        const controller = new AbortController();
+        if (data) {
+            setRefreshing(true);
+        } else {
+            setLoading(true);
+        }
+        setError(null);
+
         Promise.all([
-            fetch('/api/dashboard').then(res => res.json()),
-            fetch('/api/inventory').then(res => res.json()),
+            fetch(`/api/dashboard?costMethod=${isAdmin ? costMethod : 'weighted_average_as_of_sale_date'}`, { signal: controller.signal }).then(res => res.json()),
+            fetch('/api/inventory', { signal: controller.signal }).then(res => res.json()),
         ])
             .then(([dashboardData, inventoryData]) => {
                 setData(dashboardData);
                 setInventorySummary(inventoryData?.adviceSummary || { reorderNow: 0, reorderSoon: 0 });
                 setLoading(false);
+                setRefreshing(false);
             })
             .catch(() => {
-                setData(null);
-                setInventorySummary({ reorderNow: 0, reorderSoon: 0 });
+                if (controller.signal.aborted) {
+                    return;
+                }
+
+                if (!data) {
+                    setData(null);
+                    setInventorySummary({ reorderNow: 0, reorderSoon: 0 });
+                }
+                setError('Unable to refresh dashboard right now. Showing the latest available view.');
                 setLoading(false);
+                setRefreshing(false);
             });
-    }, []);
+
+        return () => controller.abort();
+    }, [costMethod, isAdmin]);
 
     const isOpsViewer = user?.role === 'admin' || user?.role === 'manager';
     const attentionCards = [
@@ -78,7 +152,7 @@ export default function Dashboard() {
     ];
     const activeAttentionCount = attentionCards.filter((card) => card.count > 0).length;
 
-    if (loading) return (
+    if (loading && !data) return (
         <AppLayout>
             <div style={{ display: 'flex', justifyContent: 'center', padding: '100px' }}>
                 <div className="loading-spinner" />
@@ -154,106 +228,206 @@ export default function Dashboard() {
     return (
         <AppLayout>
             {isOpsViewer && (
-                <div
-                    style={{
-                        marginBottom: 20,
-                        padding: 18,
-                        borderRadius: 20,
-                        border: '1px solid rgba(148,163,184,0.18)',
-                        background: 'linear-gradient(135deg, rgba(15,23,42,0.92), rgba(12,18,31,0.96))',
-                        boxShadow: activeAttentionCount > 0 ? '0 18px 48px rgba(15,23,42,0.36)' : '0 10px 28px rgba(15,23,42,0.2)',
-                        overflow: 'hidden',
-                        position: 'relative',
-                    }}
-                >
-                    <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at top right, rgba(59,130,246,0.18), transparent 36%), radial-gradient(circle at bottom left, rgba(249,115,22,0.1), transparent 30%)', pointerEvents: 'none' }} />
-                    <div style={{ position: 'relative', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, marginBottom: 16, flexWrap: 'wrap' }}>
-                        <div>
-                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1.4, color: activeAttentionCount > 0 ? '#f8fafc' : '#cbd5e1', marginBottom: 10 }}>
-                                <AlertTriangle size={14} style={{ color: activeAttentionCount > 0 ? '#f97316' : '#94a3b8' }} />
-                                Operations Pulse
+                <>
+                    <div
+                        style={{
+                            marginBottom: 20,
+                            padding: 18,
+                            borderRadius: 20,
+                            border: '1px solid rgba(148,163,184,0.18)',
+                            background: 'linear-gradient(135deg, rgba(15,23,42,0.92), rgba(12,18,31,0.96))',
+                            boxShadow: '0 16px 42px rgba(15,23,42,0.26)',
+                            overflow: 'hidden',
+                            position: 'relative',
+                        }}
+                    >
+                        <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at top left, rgba(16,185,129,0.14), transparent 30%), radial-gradient(circle at bottom right, rgba(59,130,246,0.16), transparent 34%)', pointerEvents: 'none' }} />
+                        <div style={{ position: 'relative', display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+                            <div>
+                                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1.4, color: '#cbd5e1', marginBottom: 10 }}>
+                                    <DollarSign size={14} style={{ color: '#38bdf8' }} />
+                                    Finance Lens
+                                </div>
+                                <h3 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: '#f8fafc' }}>
+                                    Dashboard margins using {costMethodLabel}
+                                </h3>
+                                <p style={{ margin: '8px 0 0', color: '#94a3b8', fontSize: 13, maxWidth: 680 }}>
+                                    {isAdmin
+                                        ? 'Switch the costing model here to keep dashboard finance cards aligned with reports and exports.'
+                                        : 'This dashboard is showing the default weighted-average finance lens. Advanced costing views are reserved for admins.'}
+                                </p>
                             </div>
-                            <h3 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: '#f8fafc' }}>
-                                {activeAttentionCount > 0 ? `${activeAttentionCount} areas need attention now` : 'No urgent operational issues right now'}
-                            </h3>
-                            <p style={{ margin: '8px 0 0', color: '#94a3b8', fontSize: 13, maxWidth: 680 }}>
-                                Click any signal below to jump straight to the page where the team can act on it.
-                            </p>
-                        </div>
-                        <div style={{ alignSelf: 'center', padding: '8px 12px', borderRadius: 999, background: activeAttentionCount > 0 ? 'rgba(249,115,22,0.14)' : 'rgba(51,65,85,0.35)', color: activeAttentionCount > 0 ? '#fdba74' : '#cbd5e1', fontSize: 12, fontWeight: 700 }}>
-                            {activeAttentionCount > 0 ? 'Actionable alerts live' : 'Everything is stable'}
+                            {isAdmin ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 280 }}>
+                                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                                        {isSyncing && (
+                                            <div style={{ padding: '7px 11px', borderRadius: 999, background: 'rgba(245,158,11,0.12)', color: '#fde68a', fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1 }}>
+                                                Syncing view...
+                                            </div>
+                                        )}
+                                    </div>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#cbd5e1', fontSize: 12, fontWeight: 700 }}>
+                                        <span>Costing</span>
+                                        <select
+                                            aria-label="Costing"
+                                            value={costMethod}
+                                            onChange={(event) => startFilterTransition(() => setCostMethod(event.target.value as CostMethod))}
+                                            style={{ padding: '10px 12px', borderRadius: 12, border: '1px solid rgba(148,163,184,0.18)', background: 'rgba(15,23,42,0.78)', color: '#e2e8f0' }}
+                                        >
+                                            <option value="weighted_average_as_of_sale_date">Weighted Avg</option>
+                                            <option value="fifo">FIFO</option>
+                                            <option value="lifo">LIFO</option>
+                                        </select>
+                                    </label>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8 }}>
+                                        {[
+                                            { key: 'weighted_average_as_of_sale_date', label: 'Weighted Avg', accent: '#38bdf8', detail: 'Blended cost view' },
+                                            { key: 'fifo', label: 'FIFO', accent: '#f59e0b', detail: 'Oldest stock first' },
+                                            { key: 'lifo', label: 'LIFO', accent: '#22c55e', detail: 'Newest stock first' },
+                                        ].map((item) => (
+                                            <button
+                                                key={item.key}
+                                                type="button"
+                                                onClick={() => startFilterTransition(() => setCostMethod(item.key as CostMethod))}
+                                                aria-pressed={item.key === costMethod}
+                                                style={{
+                                                    padding: '10px 12px',
+                                                    borderRadius: 14,
+                                                    border: `1px solid ${item.key === costMethod ? `${item.accent}55` : `${item.accent}25`}`,
+                                                    background: item.key === costMethod ? `${item.accent}18` : 'rgba(255,255,255,0.04)',
+                                                    textAlign: 'left',
+                                                    cursor: 'pointer',
+                                                    boxShadow: item.key === costMethod ? `0 10px 24px ${item.accent}18` : 'none',
+                                                }}
+                                            >
+                                                <div style={{ color: '#f8fafc', fontSize: 12, fontWeight: 800, marginBottom: 4 }}>{item.label}</div>
+                                                <div style={{ color: '#94a3b8', fontSize: 11, lineHeight: 1.5 }}>{item.detail}</div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                    <div style={{ padding: '12px 14px', borderRadius: 14, border: '1px solid rgba(148,163,184,0.14)', background: 'rgba(15,23,42,0.55)', color: '#cbd5e1', fontSize: 12, lineHeight: 1.6 }}>
+                                        <div><strong>Weighted Avg:</strong> blends available purchase costs up to the sale date.</div>
+                                        <div><strong>FIFO:</strong> assumes older stock is used first.</div>
+                                        <div><strong>LIFO:</strong> assumes newer stock is used first.</div>
+                                        <div style={{ marginTop: 6, color: '#94a3b8' }}>Changing this affects COGS, gross profit, and gross margin.</div>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div style={{ alignSelf: 'center', padding: '8px 12px', borderRadius: 999, background: 'rgba(51,65,85,0.35)', color: '#cbd5e1', fontSize: 12, fontWeight: 700 }}>
+                                    Admin-only costing control
+                                </div>
+                            )}
                         </div>
                     </div>
 
-                    <div style={{ position: 'relative', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12 }}>
-                        {attentionCards.map((card) => {
-                            const Icon = card.icon;
-                            const isActive = card.count > 0;
+                    {error && (
+                        <div style={{ position: 'relative', marginTop: 14, padding: '12px 14px', borderRadius: 14, border: '1px solid rgba(248,113,113,0.2)', background: 'rgba(69,10,10,0.16)', color: '#fecaca', fontSize: 13, fontWeight: 600 }}>
+                            {error}
+                        </div>
+                    )}
 
-                            return (
-                                <button
-                                    key={card.id}
-                                    onClick={() => router.push(card.href)}
-                                    style={{
-                                        textAlign: 'left',
-                                        padding: 16,
-                                        borderRadius: 18,
-                                        border: `1px solid ${isActive ? card.accent : 'rgba(148,163,184,0.16)'}`,
-                                        background: isActive ? `linear-gradient(180deg, ${card.glow}, rgba(15,23,42,0.88))` : 'rgba(15,23,42,0.62)',
-                                        boxShadow: isActive ? `0 14px 28px ${card.glow}` : 'none',
-                                        color: '#fff',
-                                        cursor: 'pointer',
-                                        display: 'flex',
-                                        flexDirection: 'column',
-                                        gap: 14,
-                                    }}
-                                >
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-                                        <div style={{ width: 42, height: 42, borderRadius: 14, background: 'rgba(15,23,42,0.58)', border: `1px solid ${isActive ? card.accent : 'rgba(148,163,184,0.16)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                            <Icon size={18} style={{ color: isActive ? card.accent : '#cbd5e1' }} />
+                    <div
+                        style={{
+                            marginBottom: 20,
+                            padding: 18,
+                            borderRadius: 20,
+                            border: '1px solid rgba(148,163,184,0.18)',
+                            background: 'linear-gradient(135deg, rgba(15,23,42,0.92), rgba(12,18,31,0.96))',
+                            boxShadow: activeAttentionCount > 0 ? '0 18px 48px rgba(15,23,42,0.36)' : '0 10px 28px rgba(15,23,42,0.2)',
+                            overflow: 'hidden',
+                            position: 'relative',
+                        }}
+                    >
+                        <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at top right, rgba(59,130,246,0.18), transparent 36%), radial-gradient(circle at bottom left, rgba(249,115,22,0.1), transparent 30%)', pointerEvents: 'none' }} />
+                        <div style={{ position: 'relative', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, marginBottom: 16, flexWrap: 'wrap' }}>
+                            <div>
+                                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1.4, color: activeAttentionCount > 0 ? '#f8fafc' : '#cbd5e1', marginBottom: 10 }}>
+                                    <AlertTriangle size={14} style={{ color: activeAttentionCount > 0 ? '#f97316' : '#94a3b8' }} />
+                                    Operations Pulse
+                                </div>
+                                <h3 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: '#f8fafc' }}>
+                                    {activeAttentionCount > 0 ? `${activeAttentionCount} areas need attention now` : 'No urgent operational issues right now'}
+                                </h3>
+                                <p style={{ margin: '8px 0 0', color: '#94a3b8', fontSize: 13, maxWidth: 680 }}>
+                                    Click any signal below to jump straight to the page where the team can act on it.
+                                </p>
+                            </div>
+                            <div style={{ alignSelf: 'center', padding: '8px 12px', borderRadius: 999, background: activeAttentionCount > 0 ? 'rgba(249,115,22,0.14)' : 'rgba(51,65,85,0.35)', color: activeAttentionCount > 0 ? '#fdba74' : '#cbd5e1', fontSize: 12, fontWeight: 700 }}>
+                                {activeAttentionCount > 0 ? 'Actionable alerts live' : 'Everything is stable'}
+                            </div>
+                        </div>
+                        <div style={{ position: 'relative', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12 }}>
+                            {attentionCards.map((card) => {
+                                const Icon = card.icon;
+                                const isActive = card.count > 0;
+
+                                return (
+                                    <button
+                                        key={card.id}
+                                        onClick={() => router.push(card.href)}
+                                        style={{
+                                            textAlign: 'left',
+                                            padding: 16,
+                                            borderRadius: 18,
+                                            border: `1px solid ${isActive ? card.accent : 'rgba(148,163,184,0.16)'}`,
+                                            background: isActive ? `linear-gradient(180deg, ${card.glow}, rgba(15,23,42,0.88))` : 'rgba(15,23,42,0.62)',
+                                            boxShadow: isActive ? `0 14px 28px ${card.glow}` : 'none',
+                                            color: '#fff',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            gap: 14,
+                                        }}
+                                    >
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                                            <div style={{ width: 42, height: 42, borderRadius: 14, background: 'rgba(15,23,42,0.58)', border: `1px solid ${isActive ? card.accent : 'rgba(148,163,184,0.16)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                <Icon size={18} style={{ color: isActive ? card.accent : '#cbd5e1' }} />
+                                            </div>
+                                            <ArrowRight size={16} style={{ color: isActive ? card.accent : '#64748b', flexShrink: 0 }} />
                                         </div>
-                                        <ArrowRight size={16} style={{ color: isActive ? card.accent : '#64748b', flexShrink: 0 }} />
-                                    </div>
-                                    <div>
-                                        <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: isActive ? '#e2e8f0' : '#94a3b8', marginBottom: 8 }}>
-                                            {card.title}
+                                        <div>
+                                            <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: isActive ? '#e2e8f0' : '#94a3b8', marginBottom: 8 }}>
+                                                {card.title}
+                                            </div>
+                                            <div style={{ fontSize: 30, fontWeight: 800, lineHeight: 1, color: isActive ? '#fff' : '#cbd5e1', marginBottom: 10 }}>
+                                                {card.count}
+                                            </div>
+                                            <div style={{ fontSize: 12.5, color: isActive ? '#e2e8f0' : '#94a3b8', lineHeight: 1.5 }}>
+                                                {card.detail}
+                                            </div>
                                         </div>
-                                        <div style={{ fontSize: 30, fontWeight: 800, lineHeight: 1, color: isActive ? '#fff' : '#cbd5e1', marginBottom: 10 }}>
-                                            {card.count}
-                                        </div>
-                                        <div style={{ fontSize: 12.5, color: isActive ? '#e2e8f0' : '#94a3b8', lineHeight: 1.5 }}>
-                                            {card.detail}
-                                        </div>
-                                    </div>
-                                </button>
-                            );
-                        })}
+                                    </button>
+                                );
+                            })}
+                        </div>
                     </div>
-                </div>
+                </>
             )}
 
             <div className="stat-grid">
-                <div className="stat-card orange">
-                    <div className="stat-icon-wrap orange"><DollarSign size={24} /></div>
-                    <div className="stat-value">{formatCurrency(data?.revenue?.today || 0, settings.currencySymbol)}</div>
-                    <div className="stat-label">Today&apos;s Revenue</div>
-                    <div className="stat-trend up"><TrendingUp size={14} /> +12% from yesterday</div>
-                </div>
                 <div className="stat-card blue">
+                    <div className="stat-icon-wrap orange"><DollarSign size={24} /></div>
+                    <div className="stat-value">{formatCurrency(data?.finance?.week?.netSales || 0, settings.currencySymbol)}</div>
+                    <div className="stat-label">Weekly Net Sales</div>
+                    <div className="stat-trend up"><TrendingUp size={14} /> Paid orders only • {costMethodLabel}</div>
+                </div>
+                <div className="stat-card orange">
                     <div className="stat-icon-wrap blue"><ShoppingBag size={24} /></div>
-                    <div className="stat-value">{data?.orders?.today || 0}</div>
-                    <div className="stat-label">Orders Today</div>
-                    <div className="stat-trend"><TrendingUp size={14} style={{ color: 'var(--success)' }} /> {data?.orders?.active || 0} active now</div>
+                    <div className="stat-value">{formatCurrency(data?.finance?.week?.ingredientSpend || 0, settings.currencySymbol)}</div>
+                    <div className="stat-label">Weekly Ingredient Spend</div>
+                    <div className="stat-trend"><TrendingUp size={14} style={{ color: 'var(--success)' }} /> Logged market purchases • {costMethodLabel}</div>
                 </div>
                 <div className="stat-card green">
                     <div className="stat-icon-wrap green"><Users size={24} /></div>
-                    <div className="stat-value">{data?.customers || 0}</div>
-                    <div className="stat-label">Customers this Month</div>
+                    <div className="stat-value">{formatCurrency(data?.finance?.week?.grossProfit || 0, settings.currencySymbol)}</div>
+                    <div className="stat-label">Weekly Gross Profit</div>
+                    <div className="stat-trend up"><TrendingUp size={14} /> Costed with {costMethodLabel}</div>
                 </div>
                 <div className="stat-card purple">
                     <div className="stat-icon-wrap purple"><DollarSign size={24} /></div>
-                    <div className="stat-value">{formatCurrency(data?.revenue?.month || 0, settings.currencySymbol)}</div>
-                    <div className="stat-label">Monthly Revenue</div>
+                    <div className="stat-value">{(data?.finance?.month?.grossMarginPct || 0).toFixed(1)}%</div>
+                    <div className="stat-label">Monthly Gross Margin</div>
+                    <div className="stat-trend up"><TrendingUp size={14} /> Current finance lens</div>
                 </div>
             </div>
 
@@ -261,8 +435,8 @@ export default function Dashboard() {
                 <div className="card">
                     <div className="card-header">
                         <div>
-                            <h3 className="card-title">Revenue (Last 7 Days)</h3>
-                            <p className="card-subtitle">Daily earnings breakdown</p>
+                            <h3 className="card-title">Net Sales (Last 7 Days)</h3>
+                            <p className="card-subtitle">Paid-order sales after discounts</p>
                         </div>
                     </div>
                     <div className="chart-wrap">
@@ -272,7 +446,7 @@ export default function Dashboard() {
                                     <XAxis dataKey="date" stroke="var(--text-muted)" fontSize={12} tickLine={false} axisLine={false} tickFormatter={v => v.slice(5)} />
                                     <YAxis stroke="var(--text-muted)" fontSize={12} tickLine={false} axisLine={false} tickFormatter={v => `Le ${v}`} />
                                     <Tooltip cursor={{ fill: 'rgba(255,255,255,0.05)' }} contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)' }} />
-                                    <Bar dataKey="revenue" fill="var(--brand-500)" radius={[4, 4, 0, 0]} />
+                                    <Bar dataKey="netSales" fill="var(--brand-500)" radius={[4, 4, 0, 0]} />
                                 </BarChart>
                             </ResponsiveContainer>
                         ) : (
@@ -299,7 +473,7 @@ export default function Dashboard() {
                                 </tr>
                             </thead>
                             <tbody>
-                                {data?.recentOrders?.map((order: any) => (
+                                {data?.recentOrders?.map((order) => (
                                     <tr key={order.id}>
                                         <td>
                                             <div className="font-bold">#{order.orderNumber}</div>
@@ -359,18 +533,18 @@ export default function Dashboard() {
                         <h3 className="card-title">Table Status</h3>
                     </div>
                     <div className="grid-2 gap-2 mt-2">
-                        <div style={{ background: 'rgba(16,185,129,0.1)', padding: '16px', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
-                            <div style={{ fontSize: 24, fontWeight: 800, color: '#10b981' }}>{data?.tables?.available || 0}</div>
+                        <div style={{ background: tableStatusColors.available.panel, padding: '16px', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
+                            <div style={{ fontSize: 24, fontWeight: 800, color: tableStatusColors.available.solid }}>{data?.tables?.available || 0}</div>
                             <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: 600 }}>Available</div>
                         </div>
-                        <div style={{ background: 'rgba(249,115,22,0.1)', padding: '16px', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
-                            <div style={{ fontSize: 24, fontWeight: 800, color: 'var(--brand-500)' }}>{data?.tables?.occupied || 0}</div>
+                        <div style={{ background: tableStatusColors.occupied.panel, padding: '16px', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
+                            <div style={{ fontSize: 24, fontWeight: 800, color: tableStatusColors.occupied.solid }}>{data?.tables?.occupied || 0}</div>
                             <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: 600 }}>Occupied</div>
                         </div>
                     </div>
                     <div className="mt-4 flex gap-2">
-                        <div style={{ background: 'rgba(59,130,246,0.1)', padding: '8px', borderRadius: 'var(--radius-md)', flex: 1, textAlign: 'center' }}>
-                            <span style={{ fontSize: 14, fontWeight: 700, color: '#3b82f6' }}>{data?.tables?.reserved || 0}</span> <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Reserved</span>
+                        <div style={{ background: tableStatusColors.reserved.panel, padding: '8px', borderRadius: 'var(--radius-md)', flex: 1, textAlign: 'center' }}>
+                            <span style={{ fontSize: 14, fontWeight: 700, color: tableStatusColors.reserved.solid }}>{data?.tables?.reserved || 0}</span> <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Reserved</span>
                         </div>
                     </div>
                 </div>

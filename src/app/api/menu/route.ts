@@ -22,7 +22,14 @@ export async function GET(req: NextRequest) {
     const since = subDays(new Date(), POPULARITY_LOOKBACK_DAYS);
     const [items, recentOrderLines] = await Promise.all([
         prisma.menuItem.findMany({
-            include: { category: true },
+            include: {
+                category: true,
+                extraOptions: {
+                    where: { isActive: true },
+                    include: { inventory: true },
+                    orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+                },
+            },
             orderBy: [{ category: { sortOrder: 'asc' } }, { sortOrder: 'asc' }],
         }),
         prisma.orderItem.findMany({
@@ -58,6 +65,16 @@ export async function POST(req: NextRequest) {
     if (!data.name || !data.categoryId || !Number.isFinite(data.price)) {
         return NextResponse.json({ error: 'Name, category, and a valid price are required' }, { status: 400 });
     }
-    const item = await prisma.menuItem.create({ data, include: { category: true } });
+    const item = await prisma.menuItem.create({
+        data,
+        include: {
+            category: true,
+            extraOptions: {
+                where: { isActive: true },
+                include: { inventory: true },
+                orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+            },
+        },
+    });
     return NextResponse.json(item, { status: 201 });
 }

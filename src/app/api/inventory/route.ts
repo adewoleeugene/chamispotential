@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { endOfMonth, endOfWeek, startOfMonth, startOfWeek, subDays } from 'date-fns';
 import { prisma } from '@/lib/prisma';
 import { getRequestUser } from '@/lib/auth';
-import { subDays } from 'date-fns';
+import { buildInventoryCostMap } from '@/lib/profitability';
+import { parseDateInput } from '@/lib/date-only';
 
 function normalizeInventoryPayload(input: Record<string, unknown>) {
     const parseNumber = (value: unknown, fallback = 0) => {
@@ -17,9 +19,7 @@ function normalizeInventoryPayload(input: Record<string, unknown>) {
     };
 
     const parseOptionalDate = (value: unknown) => {
-        if (!value) return null;
-        const parsed = new Date(String(value));
-        return Number.isNaN(parsed.getTime()) ? null : parsed;
+        return parseDateInput(value);
     };
 
     return {
@@ -39,6 +39,12 @@ function normalizeInventoryPayload(input: Record<string, unknown>) {
 
 export async function GET(req: NextRequest) {
     if (!await getRequestUser(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const now = new Date();
+    const weekStart = startOfWeek(now);
+    const weekEnd = endOfWeek(now);
+    const monthStart = startOfMonth(now);
+    const monthEnd = endOfMonth(now);
+
     const inventory = await prisma.inventory.findMany({
         orderBy: { name: 'asc' },
         include: {
@@ -53,21 +59,70 @@ export async function GET(req: NextRequest) {
                                         status: { not: 'cancelled' },
                                     },
                                 },
-                                include: { order: true },
+                                include: {
+                                    order: true,
+                                    removals: true,
+                                    additions: true,
+                                },
                             },
                         },
                     },
                 },
             },
+            extraOptions: {
+                include: {
+                    orderItemAdditions: {
+                        include: {
+                            orderItem: {
+                                include: {
+                                    order: true,
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+            purchases: {
+                orderBy: { purchasedAt: 'desc' },
+            },
         },
     });
 
+    const costMap = buildInventoryCostMap(
+        inventory.flatMap((item) => item.purchases),
+        inventory.map((item) => ({ id: item.id, cost: item.cost })),
+        now
+    );
+
     const itemsWithUsage = inventory.map((item) => {
-        const weeklyUsage = item.recipes.reduce((sum, recipe) => (
-            sum + recipe.menuItem.orderItems.reduce((itemSum, orderItem) => (
-                itemSum + (orderItem.quantity * recipe.quantityUsed)
-            ), 0)
+        const costSnapshot = costMap.get(item.id);
+        const weeklyPurchaseSpend = item.purchases
+            .filter((purchase) => purchase.purchasedAt >= weekStart && purchase.purchasedAt <= weekEnd)
+            .reduce((sum, purchase) => sum + purchase.totalCost, 0);
+        const monthlyPurchaseSpend = item.purchases
+            .filter((purchase) => purchase.purchasedAt >= monthStart && purchase.purchasedAt <= monthEnd)
+            .reduce((sum, purchase) => sum + purchase.totalCost, 0);
+        const baseUsage = item.recipes.reduce((sum, recipe) => (
+            sum + recipe.menuItem.orderItems.reduce((itemSum, orderItem) => {
+                const removedUsage = orderItem.removals
+                    .filter((removal) => removal.inventoryId === item.id)
+                    .reduce((removalSum, removal) => removalSum + (orderItem.quantity * removal.quantityUsed), 0);
+
+                return itemSum + (orderItem.quantity * recipe.quantityUsed) - removedUsage;
+            }, 0)
         ), 0);
+
+        const extraUsage = item.extraOptions.reduce((sum, extraOption) => (
+            sum + extraOption.orderItemAdditions.reduce((itemSum, addition) => {
+                if (addition.orderItem.order.status === 'cancelled' || addition.orderItem.order.createdAt < subDays(new Date(), 7)) {
+                    return itemSum;
+                }
+
+                return itemSum + (addition.orderItem.quantity * addition.quantityUsed);
+            }, 0)
+        ), 0);
+
+        const weeklyUsage = baseUsage + extraUsage;
 
         const dailyUsage = weeklyUsage / 7;
         const daysRemaining = dailyUsage > 0 ? item.currentStock / dailyUsage : null;
@@ -86,7 +141,12 @@ export async function GET(req: NextRequest) {
             .map((recipe) => ({
                 menuItemId: recipe.menuItemId,
                 menuItemName: recipe.menuItem.name,
-                usage: recipe.menuItem.orderItems.reduce((sum, orderItem) => sum + (orderItem.quantity * recipe.quantityUsed), 0),
+                usage: recipe.menuItem.orderItems.reduce((sum, orderItem) => {
+                    const removedUsage = orderItem.removals
+                        .filter((removal) => removal.inventoryId === item.id)
+                        .reduce((removalSum, removal) => removalSum + (orderItem.quantity * removal.quantityUsed), 0);
+                    return sum + (orderItem.quantity * recipe.quantityUsed) - removedUsage;
+                }, 0),
             }))
             .filter((driver) => driver.usage > 0)
             .sort((a, b) => b.usage - a.usage)
@@ -101,9 +161,12 @@ export async function GET(req: NextRequest) {
             minStock: item.minStock,
             maxStock: item.maxStock,
             cost: item.cost,
+            weightedAverageCost: costSnapshot?.weightedAverageCost ?? item.cost ?? 0,
+            latestUnitCost: costSnapshot?.latestUnitCost ?? item.cost ?? null,
             supplier: item.supplier,
             location: item.location,
             lastRestocked: item.lastRestocked,
+            lastPurchaseAt: costSnapshot?.lastPurchasedAt ?? null,
             expiryDate: item.expiryDate,
             weeklyUsage,
             dailyUsage,
@@ -111,8 +174,23 @@ export async function GET(req: NextRequest) {
             recommendedReorderQty,
             advice,
             drivers,
+            weeklyPurchaseSpend,
+            monthlyPurchaseSpend,
         };
     });
+
+    const purchases = inventory.flatMap((item) => item.purchases.map((purchase) => ({
+        id: purchase.id,
+        inventoryId: item.id,
+        inventoryName: item.name,
+        unit: item.unit,
+        quantity: purchase.quantity,
+        unitCost: purchase.unitCost,
+        totalCost: purchase.totalCost,
+        supplier: purchase.supplier,
+        notes: purchase.notes,
+        purchasedAt: purchase.purchasedAt,
+    })));
 
     const adviceSummary = {
         reorderNow: itemsWithUsage.filter((item) => item.advice === 'reorder_now').length,
@@ -128,9 +206,22 @@ export async function GET(req: NextRequest) {
             })),
     };
 
+    const purchaseSummary = {
+        weekSpend: purchases
+            .filter((purchase) => purchase.purchasedAt >= weekStart && purchase.purchasedAt <= weekEnd)
+            .reduce((sum, purchase) => sum + purchase.totalCost, 0),
+        monthSpend: purchases
+            .filter((purchase) => purchase.purchasedAt >= monthStart && purchase.purchasedAt <= monthEnd)
+            .reduce((sum, purchase) => sum + purchase.totalCost, 0),
+        recentPurchases: [...purchases]
+            .sort((a, b) => b.purchasedAt.getTime() - a.purchasedAt.getTime())
+            .slice(0, 8),
+    };
+
     return NextResponse.json({
         items: itemsWithUsage,
         adviceSummary,
+        purchaseSummary,
     });
 }
 

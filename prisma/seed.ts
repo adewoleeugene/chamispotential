@@ -163,6 +163,32 @@ async function main() {
         await prisma.inventory.upsert({ where: { id: itemId }, update: {}, create: { ...item, id: itemId } });
     }
 
+    const purchaseDates = [14, 7, 2].map((daysAgo) => {
+        const date = new Date();
+        date.setDate(date.getDate() - daysAgo);
+        return date;
+    });
+
+    const purchases = [
+        { inventoryId: 'chicken-breast', quantity: 15, unitCost: 9.2, supplier: 'Fresh Farms Co.', purchasedAt: purchaseDates[0] },
+        { inventoryId: 'chicken-breast', quantity: 10, unitCost: 9.8, supplier: 'Fresh Farms Co.', purchasedAt: purchaseDates[2] },
+        { inventoryId: 'beef-mince', quantity: 8, unitCost: 12.9, supplier: 'Premium Meats', purchasedAt: purchaseDates[1] },
+        { inventoryId: 'atlantic-salmon', quantity: 6, unitCost: 23.5, supplier: 'Ocean Fresh', purchasedAt: purchaseDates[2] },
+        { inventoryId: 'mozzarella', quantity: 5, unitCost: 15.8, supplier: 'Local Dairy', purchasedAt: purchaseDates[1] },
+        { inventoryId: 'roma-tomatoes', quantity: 12, unitCost: 3.8, supplier: 'Veggie World', purchasedAt: purchaseDates[2] },
+        { inventoryId: 'fresh-basil', quantity: 8, unitCost: 2.2, supplier: 'Herb Garden', purchasedAt: purchaseDates[1] },
+    ];
+
+    for (const [index, purchase] of purchases.entries()) {
+        await prisma.inventoryPurchase.create({
+            data: {
+                id: `seed-purchase-${index + 1}`,
+                ...purchase,
+                totalCost: Number((purchase.quantity * purchase.unitCost).toFixed(2)),
+            },
+        }).catch(() => { });
+    }
+
     // Create reservations
     const futureDate1 = new Date();
     futureDate1.setDate(futureDate1.getDate() + 2);

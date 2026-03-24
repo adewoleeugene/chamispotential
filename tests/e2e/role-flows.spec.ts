@@ -98,14 +98,13 @@ test.describe('admin and waiter flows', () => {
         const submitResponse = page.waitForResponse((response) =>
             response.url().includes('/api/orders') && response.request().method() === 'POST' && response.status() === 201
         );
-        await page.getByRole('button', { name: /collect .* send to kitchen/i }).click();
+        await page.getByRole('button', { name: /place order/i }).click();
+        await page.getByRole('button', { name: /^open tab$/i }).click();
         const createdOrderResponse = await submitResponse;
         const createdOrder = await createdOrderResponse.json();
 
-        await page.getByRole('button', { name: /confirm paid/i }).click();
-
         expect(createdOrder.orderNumber).toBeGreaterThan(beforeMaxOrderNumber);
-        expect(createdOrder.status).toBe('draft');
+        expect(createdOrder.status).toBe('pending');
         expect(createdOrder.table?.number).toBe(3);
 
         const persistedOrder = await page.evaluate(async (orderId) => {
@@ -116,5 +115,48 @@ test.describe('admin and waiter flows', () => {
 
         expect(persistedOrder).toBeTruthy();
         expect(persistedOrder.status).toBe('pending');
+        expect(persistedOrder.paymentStatus).toBe('unpaid');
+    });
+
+    test('waiter can settle an open tab with cash when the guest is leaving', async ({ page }) => {
+        await loginAs(page, 'waiter');
+        await page.getByText('Waterloo', { exact: true }).click();
+        await expect(page.getByRole('heading', { name: /order for waterloo/i })).toBeVisible();
+
+        await page.locator('.menu-item-card').first().click();
+
+        const createResponse = page.waitForResponse((response) =>
+            response.url().includes('/api/orders') && response.request().method() === 'POST' && response.status() === 201
+        );
+        await page.getByRole('button', { name: /place order/i }).click();
+        await page.getByRole('button', { name: /^open tab$/i }).click();
+        const createdOrderResponse = await createResponse;
+        const createdOrder = await createdOrderResponse.json();
+
+        await expect(page.getByRole('heading', { name: /order for waterloo/i })).toHaveCount(0);
+
+        await page.getByText('Waterloo', { exact: true }).click();
+        await expect(page.getByRole('heading', { name: /order for waterloo/i })).toBeVisible();
+
+        const orderCard = page.locator('div').filter({ hasText: `#${createdOrder.orderNumber}` }).first();
+        await expect(orderCard).toContainText(/settle bill/i);
+
+        const settleResponse = page.waitForResponse((response) =>
+            response.url().includes(`/api/orders/${createdOrder.id}`) &&
+            response.request().method() === 'PATCH' &&
+            response.ok()
+        );
+        await orderCard.getByRole('button', { name: /settle bill/i }).click();
+        await page.getByRole('button', { name: /^cash$/i }).click();
+        await settleResponse;
+
+        const persistedOrder = await page.evaluate(async (orderId) => {
+            const response = await fetch(`/api/orders/${orderId}`);
+            return response.json();
+        }, createdOrder.id);
+
+        expect(persistedOrder.paymentStatus).toBe('paid');
+        expect(persistedOrder.paymentMethod).toBe('cash');
+        expect(['pending', 'preparing', 'ready', 'served']).toContain(persistedOrder.status);
     });
 });

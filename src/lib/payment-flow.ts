@@ -1,14 +1,17 @@
-export type PaymentChannel = 'manual' | 'monime';
-export type ManualPaymentMethod = 'cash' | 'card' | 'mobile';
-export type ManualPaymentFlow = 'settle_now' | 'open_tab';
+export type PaymentMethod = 'cash' | 'monime';
+export type DeferredPaymentMethod = 'cash' | 'card' | 'mobile';
+export type BillingMode = 'pay_now' | 'open_tab';
 
-type OrderPaymentConfigInput = {
-  paymentChannel: PaymentChannel;
-  manualPaymentMethod: ManualPaymentMethod;
-  manualPaymentFlow: ManualPaymentFlow;
-};
+type OrderPaymentConfigInput =
+  | {
+    billingMode: 'open_tab';
+  }
+  | {
+    billingMode: 'pay_now';
+    paymentMethod: PaymentMethod;
+  };
 
-export function isManualPaymentMethod(value: string | null | undefined): value is ManualPaymentMethod {
+export function isManualPaymentMethod(value: string | null | undefined): value is DeferredPaymentMethod {
   return value === 'cash' || value === 'card' || value === 'mobile';
 }
 
@@ -25,7 +28,7 @@ export function getManualPaymentMethodLabel(method: string | null | undefined) {
 }
 
 export function getOrderPaymentConfig(input: OrderPaymentConfigInput) {
-  if (input.paymentChannel === 'monime') {
+  if (input.billingMode === 'pay_now' && input.paymentMethod === 'monime') {
     return {
       paymentMethod: 'monime' as const,
       paymentStatus: 'processing' as const,
@@ -34,19 +37,17 @@ export function getOrderPaymentConfig(input: OrderPaymentConfigInput) {
     };
   }
 
-  if (input.manualPaymentFlow === 'settle_now') {
+  if (input.billingMode === 'pay_now' && input.paymentMethod === 'cash') {
     return {
-      paymentMethod: input.manualPaymentMethod,
-      paymentStatus: 'pending' as const,
-      status: 'draft' as const,
-      deferActivation: true,
+      paymentMethod: 'cash' as const,
+      paymentStatus: 'paid' as const,
+      status: 'pending' as const,
     };
   }
 
   return {
-    paymentMethod: input.manualPaymentMethod,
+    paymentMethod: null,
     paymentStatus: 'unpaid' as const,
-    status: 'draft' as const,
-    deferActivation: true,
+    status: 'pending' as const,
   };
 }
