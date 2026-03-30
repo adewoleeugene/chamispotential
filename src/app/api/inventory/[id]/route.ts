@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getRequestUser } from '@/lib/auth';
+import { parseDateInput } from '@/lib/date-only';
 
 function normalizeInventoryPayload(input: Record<string, unknown>) {
     const parseOptionalNumber = (value: unknown) => {
@@ -15,9 +16,7 @@ function normalizeInventoryPayload(input: Record<string, unknown>) {
     };
 
     const parseOptionalDate = (value: unknown) => {
-        if (!value) return null;
-        const parsed = new Date(String(value));
-        return Number.isNaN(parsed.getTime()) ? null : parsed;
+        return parseDateInput(value);
     };
 
     return {

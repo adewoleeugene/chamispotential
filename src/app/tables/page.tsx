@@ -6,12 +6,13 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSettings } from '@/contexts/SettingsContext';
 import OrderModal from '@/components/OrderModal';
 import {
-    GitMerge, UtensilsCrossed, ShoppingBag, Truck,
-    CalendarDays, Printer, RefreshCw, ZoomIn, ZoomOut,
-    Users, X, CheckCircle, ArrowRight, Link, Plus, Pencil, Trash2, LocateFixed,
+    GitMerge, UtensilsCrossed,
+    CalendarDays, RefreshCw, ZoomIn, ZoomOut,
+    Users, X, CheckCircle, ArrowRight, Link, Plus, Pencil, Trash2, LocateFixed, Clock3,
     BarChart3, DollarSign, ShoppingCart
 } from 'lucide-react';
 import { formatCurrency } from '@/lib/currency';
+import { getTableDisplayStatus, TABLE_STATUS_COLORS } from '@/lib/table-status';
 
 type AnalyticsRange = 'day' | 'week' | 'month';
 
@@ -81,40 +82,35 @@ function getTableLayout(table: any) {
     };
 }
 
-function getElapsedMinutes(orders: any[], now: number | null): number | null {
-    if (!orders || orders.length === 0) return null;
-    if (now === null) return null;
-    return Math.floor((now - new Date(orders[0].createdAt).getTime()) / 60000);
-}
-
-function formatTimer(minutes: number): string {
-    const h = Math.floor(minutes / 60);
-    const m = minutes % 60;
-    return h > 0 ? `${h}h${String(m).padStart(2, '0')}` : `${String(m).padStart(2, '0')}:00`;
-}
-
 function formatShortMoney(amount: number, currencySymbol: string) {
     if (amount >= 1000) return `${currencySymbol}${(amount / 1000).toFixed(1)}k`;
     return formatCurrency(amount, currencySymbol);
 }
 
+function formatElapsedMinutes(startedAt?: string | null, endedAt?: string | null, status?: string | null, now = Date.now()) {
+    if (!startedAt) return null;
+    if (status === 'served' || status === 'completed' || status === 'cancelled') return null;
+    const endTime = endedAt ? new Date(endedAt).getTime() : now;
+    const minutes = Math.max(0, Math.floor((endTime - new Date(startedAt).getTime()) / 60000));
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    return hours > 0 ? `${hours}h ${remainingMinutes}m` : `${remainingMinutes}m`;
+}
+
 /* ─── Status-based visual tokens ──────────────────────────────────────────── */
-function getTokens(status: string, elapsed: number | null) {
-    const isAlert = elapsed !== null && elapsed >= 60;
-    if (status === 'available') {
-        return { body: '#1c2130', border: '#2a3044', seat: '#2e3548', timerBg: '', shadow: 'none' };
+function getTokens(status: string, hasActiveOrders: boolean) {
+    const displayStatus = getTableDisplayStatus({ status, activeOrderCount: hasActiveOrders ? 1 : 0 });
+
+    if (displayStatus === 'occupied') {
+        return { body: '#2a1215', border: TABLE_STATUS_COLORS.occupied.solid, seat: '#fca5a5', shadow: '0 0 18px rgba(239,68,68,0.22)' };
     }
-    if (status === 'reserved') {
-        return { body: '#0f1e35', border: '#2563eb', seat: '#3b82f6', timerBg: '#2563eb', shadow: '0 0 18px rgba(37,99,235,0.35)' };
+    if (displayStatus === 'available') {
+        return { body: '#12261d', border: TABLE_STATUS_COLORS.available.solid, seat: '#86efac', shadow: '0 0 18px rgba(16,185,129,0.2)' };
     }
-    if (status === 'cleaning') {
-        return { body: '#1a1030', border: '#7c3aed', seat: '#7c3aed', timerBg: '#7c3aed', shadow: '0 0 18px rgba(124,58,237,0.3)' };
+    if (displayStatus === 'reserved') {
+        return { body: '#1f2937', border: TABLE_STATUS_COLORS.reserved.solid, seat: '#cbd5e1', shadow: '0 0 18px rgba(148,163,184,0.18)' };
     }
-    // occupied
-    if (isAlert) {
-        return { body: '#2a1515', border: '#dc2626', seat: '#dc2626', timerBg: '#dc2626', shadow: '0 0 22px rgba(220,38,38,0.4)' };
-    }
-    return { body: '#1a2510', border: '#2d4a1a', seat: '#c7923a', timerBg: '#0d7c5a', shadow: '0 0 18px rgba(34,197,94,0.2)' };
+    return { body: '#0f172a', border: '#64748b', seat: '#94a3b8', shadow: '0 0 18px rgba(100,116,139,0.18)' };
 }
 
 /* ─── Rectangular seat indicators ─────────────────────────────────────────── */
@@ -180,7 +176,6 @@ type MergeHighlight = 'none' | 'source' | 'target' | 'dim';
 type DragPreview = { x: number; y: number };
 function TablePod({
     table,
-    now,
     onClick,
     mergeHighlight = 'none',
     isAdmin = false,
@@ -193,7 +188,6 @@ function TablePod({
     isDragging = false,
 }: {
     table: any;
-    now: number | null;
     onClick: () => void;
     mergeHighlight?: MergeHighlight;
     isAdmin?: boolean;
@@ -207,10 +201,12 @@ function TablePod({
 }) {
     const baseLayout = getTableLayout(table);
     const layout = dragPreview || baseLayout;
-    const elapsed = getElapsedMinutes(table.orders, now);
-    const tok = getTokens(table.status, elapsed);
+    const hasActiveOrders = (table.orders?.length || 0) > 0;
+    const tok = getTokens(table.status, hasActiveOrders);
     const total = table.orders?.reduce((s: number, o: any) => s + (o.total || 0), 0) || 0;
     const waiter = table.orders?.[0]?.user?.name;
+    const startedOrder = table.orders?.find((order: any) => order.serviceStartedAt) || table.orders?.[0];
+    const elapsedLabel = formatElapsedMinutes(startedOrder?.serviceStartedAt, startedOrder?.serviceEndedAt, startedOrder?.status);
     const analytics: TableAnalytics = table.analytics || EMPTY_ANALYTICS;
     const isManagerView = viewerRole === 'manager';
     const layoutShape = dragPreview ? (table.shape === 'circle' ? 'circle' : 'rect') : baseLayout.shape;
@@ -245,23 +241,6 @@ function TablePod({
         }}
             onClick={onClick}
         >
-            {/* Timer badge — floats above */}
-            {elapsed !== null && tok.timerBg && (
-                <div style={{
-                    background: tok.timerBg,
-                    color: '#fff',
-                    fontSize: 11,
-                    fontWeight: 700,
-                    padding: '3px 10px',
-                    borderRadius: 20,
-                    marginBottom: 4,
-                    letterSpacing: 0.5,
-                    zIndex: 2,
-                }}>
-                    {formatTimer(elapsed)}
-                </div>
-            )}
-
             {/* Table body */}
             <div style={{
                 position: 'relative',
@@ -340,13 +319,21 @@ function TablePod({
                         </div>
                     </div>
                 ) : total > 0 && (
-                    <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 3 }}>
-                        ${total.toFixed(0)}
+                    <div style={{ marginTop: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                        <div style={{ fontSize: 12, color: '#94a3b8' }}>
+                            ${total.toFixed(0)}
+                        </div>
+                        {elapsedLabel && (
+                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#f8fafc', background: 'rgba(15,23,42,0.72)', border: '1px solid rgba(148,163,184,0.2)', borderRadius: 999, padding: '3px 8px' }}>
+                                <Clock3 size={12} />
+                                {elapsedLabel}
+                            </div>
+                        )}
                     </div>
                 )}
 
                 {/* Available label */}
-                {table.status === 'available' && (
+                {!hasActiveOrders && (
                     <div style={{ fontSize: 10, color: '#475569', marginTop: 4, letterSpacing: 1, textTransform: 'uppercase' }}>
                         Empty
                     </div>
@@ -402,6 +389,7 @@ export default function TablesPage() {
     } | null>(null);
     const layoutPreviewRef = useRef<Record<string, DragPreview>>({});
     const suppressTapRef = useRef(false);
+    const hasLoadedTablesRef = useRef(false);
     const [tables, setTables] = useState<any[]>([]);
     const [tableAnalyticsRange, setTableAnalyticsRange] = useState<AnalyticsRange>('week');
     const [analyticsMeta, setAnalyticsMeta] = useState<{
@@ -415,14 +403,15 @@ export default function TablesPage() {
         };
     } | null>(null);
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
     const [selectedTable, setSelectedTable] = useState<any>(null);
     const [zoom, setZoom] = useState(100);
-    const [now, setNow] = useState<number | null>(null);
     const [isCompactViewport, setIsCompactViewport] = useState(false);
     const [dragPreviewById, setDragPreviewById] = useState<Record<string, DragPreview>>({});
     const [activeDragTableId, setActiveDragTableId] = useState<string | null>(null);
     const [activeDragLabel, setActiveDragLabel] = useState('');
     const [savingDragTableId, setSavingDragTableId] = useState<string | null>(null);
+    const [, setClockNow] = useState(() => Date.now());
     const toast = useToast();
     const [isTableModalOpen, setIsTableModalOpen] = useState(false);
     const [tableModalMode, setTableModalMode] = useState<'add' | 'edit'>('add');
@@ -477,20 +466,32 @@ export default function TablesPage() {
                     setAnalyticsMeta(null);
                 });
 
-        return request.finally(() => setLoading(false));
+        return request.finally(() => {
+            setLoading(false);
+            setRefreshing(false);
+        });
     }, [tableAnalyticsRange, user?.role]);
 
     useEffect(() => {
-        setLoading(true);
+        if (hasLoadedTablesRef.current) {
+            setRefreshing(true);
+        } else {
+            setLoading(true);
+        }
         void fetchTables();
         const i = setInterval(fetchTables, 30000);
         return () => clearInterval(i);
     }, [fetchTables]);
+
     useEffect(() => {
-        const updateClock = () => setNow(Date.now());
-        updateClock();
-        const interval = window.setInterval(updateClock, 60000);
-        return () => window.clearInterval(interval);
+        if (!loading) {
+            hasLoadedTablesRef.current = true;
+        }
+    }, [loading]);
+
+    useEffect(() => {
+        const interval = setInterval(() => setClockNow(Date.now()), 60000);
+        return () => clearInterval(interval);
     }, []);
 
     useEffect(() => {
@@ -822,13 +823,12 @@ export default function TablesPage() {
     };
 
     const counts = {
-        seated: tables.filter(t => t.status === 'occupied').length,
-        ordered: tables.filter(t => t.orders?.length > 0).length,
-        available: tables.filter(t => t.status === 'available').length,
-        reserved: tables.filter(t => t.status === 'reserved').length,
-        cleaning: tables.filter(t => t.status === 'cleaning').length,
+        available: tables.filter((t) => getTableDisplayStatus({ status: t.status, activeOrderCount: t.orders?.length || 0 }) === 'available').length,
+        occupied: tables.filter((t) => getTableDisplayStatus({ status: t.status, activeOrderCount: t.orders?.length || 0 }) === 'occupied').length,
+        reserved: tables.filter((t) => getTableDisplayStatus({ status: t.status, activeOrderCount: t.orders?.length || 0 }) === 'reserved').length,
+        activeOrders: tables.filter(t => t.orders?.length > 0).length,
+        emptyTables: tables.filter(t => !t.orders?.length).length,
     };
-    const totalPax = tables.filter(t => t.status === 'occupied').reduce((s, t) => s + t.capacity, 0);
     const totalRevenu = tables.reduce((s, t) => s + (t.orders?.reduce((a: number, o: any) => a + (o.total || 0), 0) || 0), 0);
     const selectedTableAnalytics: TableAnalytics = selectedTable?.analytics || EMPTY_ANALYTICS;
     const managerSummaryCards = analyticsMeta ? [
@@ -858,7 +858,7 @@ export default function TablesPage() {
         },
     ] : [];
 
-    if (loading) return <AppLayout><div style={{ display: 'flex', justifyContent: 'center', padding: 100 }}><div className="loading-spinner" /></div></AppLayout>;
+    if (loading && tables.length === 0) return <AppLayout><div style={{ display: 'flex', justifyContent: 'center', padding: 100 }}><div className="loading-spinner" /></div></AppLayout>;
 
     return (
         <AppLayout>
@@ -876,10 +876,27 @@ export default function TablesPage() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <UtensilsCrossed size={17} style={{ color: 'var(--brand-500)' }} />
                     <span style={{ fontWeight: 700, fontSize: 15 }}>Floor Management</span>
+                    {refreshing && (
+                        <span style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            padding: '5px 10px',
+                            borderRadius: 999,
+                            background: 'rgba(37,99,235,0.16)',
+                            color: '#bfdbfe',
+                            fontSize: 11,
+                            fontWeight: 700,
+                            letterSpacing: 0.4,
+                            textTransform: 'uppercase',
+                        }}>
+                            Refreshing
+                        </span>
+                    )}
                 </div>
                 <div className="floor-header-metrics" style={{ display: 'flex', gap: 14, fontSize: 13, color: 'var(--text-secondary)', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                    <span><b style={{ color: '#fff' }}>{counts.seated}</b> Dine-in</span>
-                    <span><b style={{ color: '#fff' }}>{counts.ordered}</b> Ordered</span>
+                    <span><b style={{ color: '#fff' }}>{counts.available}</b> Available</span>
+                    <span><b style={{ color: '#fff' }}>{counts.activeOrders}</b> Active Orders</span>
+                    <span><b style={{ color: '#fff' }}>{counts.emptyTables}</b> Empty Tables</span>
                     <span style={{ color: '#22c55e', fontWeight: 700 }}>{formatCurrency(totalRevenu, settings.currencySymbol)} Revenue</span>
                     {user?.role === 'admin' && (
                         <button
@@ -1001,7 +1018,6 @@ export default function TablesPage() {
                                 <TablePod
                                     key={table.id}
                                     table={table}
-                                    now={now}
                                     onClick={() => handleTableClick(table)}
                                     viewerRole={user?.role}
                                     currencySymbol={settings.currencySymbol}
@@ -1186,37 +1202,6 @@ export default function TablesPage() {
                                 )}
                             </div>
 
-                            <div style={{ background: 'var(--bg-card)', borderRadius: 14, border: '1px solid var(--border)', padding: 14 }}>
-                                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.2, color: 'var(--text-muted)', marginBottom: 10 }}>New Order</div>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                                    <button onClick={() => toast('info', user?.role === 'waiter' ? 'Click a table to start a Dine-in order' : 'Only waiters can start dine-in orders.')}
-                                        style={{ background: '#15803d', border: 'none', borderRadius: 10, padding: '13px 14px', color: '#fff', fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', transition: 'filter 0.15s' }}>
-                                        <UtensilsCrossed size={17} /> Dine-in
-                                    </button>
-                                    <button onClick={() => toast('info', 'Takeaway — coming soon')}
-                                        style={{ background: '#c2410c', border: 'none', borderRadius: 10, padding: '13px 14px', color: '#fff', fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', transition: 'filter 0.15s' }}>
-                                        <ShoppingBag size={17} /> Take Away
-                                    </button>
-                                    <button onClick={() => toast('info', 'Delivery — coming soon')}
-                                        style={{ background: '#0369a1', border: 'none', borderRadius: 10, padding: '13px 14px', color: '#fff', fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', transition: 'filter 0.15s' }}>
-                                        <Truck size={17} /> Delivery
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div style={{ background: 'var(--bg-card)', borderRadius: 14, border: '1px solid var(--border)', padding: 14 }}>
-                                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.2, color: 'var(--text-muted)', marginBottom: 10 }}>Other Actions</div>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                                    <button onClick={() => toast('info', 'Reservation Overview — coming soon')}
-                                        style={{ background: 'var(--surface-active)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px', color: 'var(--text-secondary)', fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
-                                        <CalendarDays size={16} /> Reservation Overview
-                                    </button>
-                                    <button onClick={() => toast('info', 'Print — coming soon')}
-                                        style={{ background: 'var(--surface-active)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px', color: 'var(--text-secondary)', fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
-                                        <Printer size={16} /> Print Reservation
-                                    </button>
-                                </div>
-                            </div>
                         </>
                     )}
 
@@ -1237,11 +1222,9 @@ export default function TablesPage() {
                 flexWrap: 'wrap',
             }}>
                 {([
-                    { label: 'Seated', n: counts.seated, color: '#a855f7' },
-                    { label: 'Ordered', n: counts.ordered, color: '#22c55e' },
-                    { label: 'Available', n: counts.available, color: '#4b5563' },
-                    { label: 'Reserved', n: counts.reserved, color: '#3b82f6' },
-                    { label: 'Cleaning', n: counts.cleaning, color: '#f59e0b' },
+                    { label: 'Available', n: counts.available, color: TABLE_STATUS_COLORS.available.solid },
+                    { label: 'Occupied', n: counts.occupied, color: TABLE_STATUS_COLORS.occupied.solid },
+                    { label: 'Reserved', n: counts.reserved, color: TABLE_STATUS_COLORS.reserved.solid },
                 ] as { label: string; n: number; color: string }[]).map(({ label, n, color }) => (
                     <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         <div style={{ width: 10, height: 10, borderRadius: '50%', background: color }} />
@@ -1249,10 +1232,6 @@ export default function TablesPage() {
                         <span style={{ color: 'var(--text-muted)' }}>{label}</span>
                     </div>
                 ))}
-                <div className="floor-status-pax" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-secondary)', fontWeight: 600 }}>
-                    <Users size={13} />
-                    PAX: <strong style={{ color: '#fff' }}>{totalPax}</strong>
-                </div>
             </div>
             </div>
             </div>
@@ -1261,6 +1240,7 @@ export default function TablesPage() {
             {selectedTable && mergeStep === 'idle' && user?.role === 'waiter' && (
                 <OrderModal
                     table={selectedTable}
+                    onRefresh={fetchTables}
                     onClose={() => { setSelectedTable(null); fetchTables(); }}
                 />
             )}

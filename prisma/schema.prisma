@@ -61,6 +61,7 @@ model MenuItem {
   category          Category           @relation(fields: [categoryId], references: [id])
   orderItems        OrderItem[]
   recipeIngredients RecipeIngredient[]
+  extraOptions      MenuItemExtraOption[]
 }
 
 model RecipeIngredient {
@@ -73,6 +74,27 @@ model RecipeIngredient {
 
   menuItem     MenuItem  @relation(fields: [menuItemId], references: [id])
   inventory    Inventory @relation(fields: [inventoryId], references: [id])
+
+  orderItemRemovals OrderItemRemoval[]
+}
+
+model MenuItemExtraOption {
+  id           String    @id @default(cuid())
+  menuItemId   String
+  inventoryId  String
+  label        String
+  quantityUsed Float
+  sortOrder    Int       @default(0)
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  menuItem     MenuItem  @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  inventory    Inventory @relation(fields: [inventoryId], references: [id])
+
+  orderItemAdditions OrderItemAddition[]
+
+  @@index([menuItemId, sortOrder])
 }
 
 model Table {
@@ -110,6 +132,9 @@ model Order {
   paymentMethod String? // cash, card, mobile, monime
   customerName  String?
   customerPhone String?
+  serviceStartedAt DateTime?
+  kitchenStartedAt DateTime?
+  serviceEndedAt DateTime?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -166,11 +191,45 @@ model OrderItem {
   quantity   Int
   unitPrice  Float
   notes      String?
+  kitchenNote String?
   status     String   @default("pending") // pending, preparing, ready, served
   createdAt  DateTime @default(now())
 
   order    Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
   menuItem MenuItem @relation(fields: [menuItemId], references: [id])
+
+  removals  OrderItemRemoval[]
+  additions OrderItemAddition[]
+}
+
+model OrderItemRemoval {
+  id                 String   @id @default(cuid())
+  orderItemId        String
+  recipeIngredientId String
+  inventoryId        String
+  labelSnapshot      String
+  quantityUsed       Float
+  createdAt          DateTime @default(now())
+
+  orderItem          OrderItem         @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  recipeIngredient   RecipeIngredient  @relation(fields: [recipeIngredientId], references: [id])
+
+  @@index([orderItemId])
+}
+
+model OrderItemAddition {
+  id                    String   @id @default(cuid())
+  orderItemId           String
+  menuItemExtraOptionId String?
+  inventoryId           String
+  labelSnapshot         String
+  quantityUsed          Float
+  createdAt             DateTime @default(now())
+
+  orderItem             OrderItem            @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  menuItemExtraOption   MenuItemExtraOption? @relation(fields: [menuItemExtraOptionId], references: [id], onDelete: SetNull)
+
+  @@index([orderItemId])
 }
 
 model Reservation {
@@ -207,6 +266,26 @@ model Inventory {
   updatedAt    DateTime @updatedAt
 
   recipes      RecipeIngredient[]
+  extraOptions MenuItemExtraOption[]
+  purchases    InventoryPurchase[]
+}
+
+model InventoryPurchase {
+  id          String    @id @default(cuid())
+  inventoryId String
+  quantity    Float
+  unitCost    Float
+  totalCost   Float
+  supplier    String?
+  notes       String?
+  purchasedAt DateTime
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  inventory Inventory @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+
+  @@index([inventoryId, purchasedAt])
+  @@index([purchasedAt])
 }
 
 model Shift {

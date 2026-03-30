@@ -9,6 +9,8 @@ function KitchenPageContent() {
     const searchParams = useSearchParams();
     const [orders, setOrders] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
+    const [updatingOrderId, setUpdatingOrderId] = useState<string | null>(null);
+    const [updatingNextStatus, setUpdatingNextStatus] = useState<string | null>(null);
     const [clockNow, setClockNow] = useState(() => Date.now());
     const toast = useToast();
     const incomingRef = useRef<HTMLDivElement | null>(null);
@@ -53,19 +55,48 @@ function KitchenPageContent() {
     }, [focus, loading]);
 
     const updateStatus = async (id: string, status: string) => {
-        const res = await fetch(`/api/orders/${id}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ status })
-        });
-        if (res.ok) {
+        const previousOrders = orders;
+        setUpdatingOrderId(id);
+        setUpdatingNextStatus(status);
+        setOrders((currentOrders) => currentOrders.map((order) => (
+            order.id === id ? { ...order, status, _optimistic: true } : order
+        )));
+
+        try {
+            const res = await fetch(`/api/orders/${id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status })
+            });
+
+            if (!res.ok) {
+                setOrders(previousOrders);
+                toast('error', 'Unable to update order status right now');
+                return;
+            }
+
             toast('success', `Order moved to ${status}`);
             fetchOrders();
+        } catch {
+            setOrders(previousOrders);
+            toast('error', 'Unable to update order status right now');
+        } finally {
+            setUpdatingOrderId(null);
+            setUpdatingNextStatus(null);
         }
     };
 
-    const getElapsedTime = (createdAt: string) => {
-        const diff = Math.floor((clockNow - new Date(createdAt).getTime()) / 60000);
+    const getElapsedTime = (startedAt?: string | null, endedAt?: string | null, status?: string | null) => {
+        if (!startedAt) {
+            return null;
+        }
+
+        if (status === 'served' || status === 'completed' || status === 'cancelled') {
+            return null;
+        }
+
+        const endTime = endedAt ? new Date(endedAt).getTime() : clockNow;
+        const diff = Math.floor((endTime - new Date(startedAt).getTime()) / 60000);
         return diff;
     };
 
@@ -110,63 +141,224 @@ function KitchenPageContent() {
         };
     };
 
-    const renderOrderCard = (order: any) => {
-        const elapsed = getElapsedTime(order.createdAt);
-        const timeColor = elapsed > 20 ? 'var(--danger)' : elapsed > 10 ? 'var(--warning)' : 'var(--success)';
+    const renderLane = ({
+        title,
+        count,
+        orders,
+        emptyCopy,
+        badgeClassName,
+        fallbackBadgeStyle,
+        column,
+        laneRef,
+    }: {
+        title: string;
+        count: number;
+        orders: any[];
+        emptyCopy: string;
+        badgeClassName?: string;
+        fallbackBadgeStyle?: React.CSSProperties;
+        column: 'pending' | 'preparing' | 'ready' | 'served';
+        laneRef: React.RefObject<HTMLDivElement | null>;
+    }) => {
+        const columnState = getColumnState(column);
 
         return (
-            <div key={order.id} className="card" style={{ padding: 0, borderTop: `4px solid ${timeColor}`, flexShrink: 0, background: 'var(--surface-active)' }}>
-                <div className="px-4 py-3 border-b border-[var(--border)] flex justify-between items-center bg-opacity-50" style={{ background: 'rgba(255,255,255,0.02)' }}>
+            <div
+                ref={laneRef}
+                style={{
+                    background: 'linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.015)), var(--bg-card)',
+                    padding: '14px',
+                    borderRadius: 24,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '14px',
+                    minHeight: '100%',
+                    border: `1px solid ${columnState.borderColor}`,
+                    boxShadow: columnState.boxShadow,
+                    opacity: columnState.opacity,
+                    transition: 'opacity 0.2s, box-shadow 0.2s, border-color 0.2s',
+                    backdropFilter: 'blur(14px)',
+                }}
+            >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '12px' }}>
                     <div>
-                        <div className="font-bold border-b-2 border-transparent" style={{ fontSize: 18 }}>#{order.orderNumber}</div>
-                        <div className="text-muted text-sm flex items-center gap-1 mt-1">
-                            {order.type === 'dine-in' ? `Table ${order.table?.number}` : order.type.toUpperCase()}
-                            {order.table?.mergeGroupId && <Link size={12} style={{ color: '#3b82f6' }} />}
+                        <h3 style={{ fontSize: 18, fontWeight: 800, color: '#f8fafc', margin: 0 }}>{title}</h3>
+                        <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 4, textTransform: 'uppercase', letterSpacing: 1.1 }}>
+                            {count === 0 ? 'Queue clear' : `${count} live ticket${count === 1 ? '' : 's'}`}
                         </div>
                     </div>
-                    <div className="text-right">
-                        <div className="font-bold flex items-center gap-1 justify-end" style={{ color: timeColor }}>
-                            <Clock size={14} /> {elapsed}m
-                        </div>
-                        <div className="text-sm mt-1">
-                            <span className={`badge ${order.status}`}>{order.status}</span>
-                        </div>
-                    </div>
+                    {badgeClassName ? (
+                        <span className={`badge ${badgeClassName}`}>{count}</span>
+                    ) : (
+                        <span className="badge" style={fallbackBadgeStyle}>{count}</span>
+                    )}
                 </div>
+                {orders.length > 0 ? orders.map(order => renderOrderCard(order)) : (
+                    <div style={{
+                        padding: '28px 24px',
+                        textAlign: 'center',
+                        color: 'var(--text-muted)',
+                        fontSize: 13,
+                        background: 'rgba(255,255,255,0.03)',
+                        borderRadius: 18,
+                        border: '1px dashed rgba(255,255,255,0.06)',
+                    }}>
+                        {emptyCopy}
+                    </div>
+                )}
+            </div>
+        );
+    };
 
-                <div className="p-4" style={{ minHeight: '120px' }}>
-                    {order.items.map((item: any, i: number) => (
-                        <div key={i} className="flex justify-between items-start mb-3 border-b border-[var(--border)] pb-2 last:border-0 last:pb-0">
-                            <div className="flex gap-2">
-                                <div className="font-bold" style={{ width: 24 }}>{item.quantity}x</div>
-                                <div>
-                                    <div className="font-bold">{item.menuItem.name}</div>
-                                    {item.notes && <div className="text-warning text-sm mt-1">📝 {item.notes}</div>}
+    const renderOrderCard = (order: any) => {
+        const elapsed = getElapsedTime(order.serviceStartedAt, order.serviceEndedAt, order.status);
+        const isUpdating = updatingOrderId === order.id;
+        const timeColor = elapsed === null
+            ? 'var(--text-muted)'
+            : elapsed > 20
+                ? 'var(--danger)'
+                : elapsed > 10
+                    ? 'var(--warning)'
+                    : 'var(--success)';
+
+        return (
+            <div key={order.id} className="card" style={{ marginInline: 12, padding: 0, borderTop: `4px solid ${timeColor}`, flexShrink: 0, background: 'linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.018)) , var(--surface-active)', overflow: 'hidden' }}>
+                <div
+                    className="px-5 pt-3 pb-2 border-b border-[var(--border)]"
+                    style={{
+                        background: 'linear-gradient(135deg, rgba(255,255,255,0.035), rgba(255,255,255,0.01))',
+                    }}
+                >
+                    <div
+                        style={{
+                            display: 'flex',
+                            alignItems: 'flex-start',
+                            justifyContent: 'space-between',
+                            gap: 14,
+                            padding: '10px 12px',
+                            borderRadius: 20,
+                            background: 'rgba(255,255,255,0.02)',
+                            border: '1px solid rgba(255,255,255,0.05)',
+                        }}
+                    >
+                        <div style={{ minWidth: 0, flex: '0 1 62%', maxWidth: 320 }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 10 }}>
+                                <div className="font-bold" style={{ fontSize: 18, lineHeight: 1, color: '#f8fafc', letterSpacing: '-0.04em' }}>
+                                    #{order.orderNumber}
+                                </div>
+                                <div style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 6,
+                                    padding: '8px 12px',
+                                    borderRadius: 999,
+                                    background: 'rgba(15,23,42,0.52)',
+                                    border: '1px solid rgba(255,255,255,0.06)',
+                                    color: '#cbd5e1',
+                                    fontSize: 11,
+                                    fontWeight: 700,
+                                    letterSpacing: 0.4,
+                                    textTransform: 'uppercase',
+                                }}>
+                                    {order.type === 'dine-in' ? `Table ${order.table?.number}` : order.type.toUpperCase()}
+                                    {order.table?.mergeGroupId && <Link size={12} style={{ color: '#60a5fa' }} />}
+                                </div>
+                                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: timeColor, fontSize: 13, fontWeight: 800, whiteSpace: 'nowrap' }}>
+                                    <Clock size={14} />
+                                    {elapsed === null ? 'Not started' : `${elapsed} min on station`}
                                 </div>
                             </div>
                         </div>
-                    ))}
+                        <div style={{ flexShrink: 0, paddingTop: 2 }}>
+                            <span
+                                className={`badge ${order.status}`}
+                                style={{
+                                    padding: '10px 14px',
+                                    boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.04)',
+                                }}
+                            >
+                                {order.status}
+                            </span>
+                        </div>
+                    </div>
                 </div>
 
-                <div className="p-4 border-t border-[var(--border)]" style={{ background: 'rgba(255,255,255,0.02)' }}>
-                    {order.status === 'pending' ? (
-                        <button className="btn btn-primary w-full justify-center" onClick={() => updateStatus(order.id, 'preparing')}>
-                            Start Preparing
-                        </button>
-                    ) : order.status === 'preparing' ? (
-                        <button className="btn btn-success w-full justify-center" onClick={() => updateStatus(order.id, 'ready')}>
-                            <Check size={16} /> Mark as Ready
-                        </button>
-                    ) : order.status === 'ready' ? (
-                        <div className="btn w-full justify-center" style={{ background: 'var(--surface-active)', color: 'var(--text-muted)', cursor: 'default' }}>
-                            Waiting for Pickup
-                        </div>
-                    ) : (
-                        <div className="btn w-full justify-center" style={{ background: 'var(--success)', color: 'white', cursor: 'default', opacity: 0.8 }}>
-                            <Check size={16} /> Delivered
-                        </div>
-                    )}
+                <div className="px-5 pt-3 pb-5" style={{ minHeight: '156px' }}>
+                    <div style={{ paddingInline: 14 }}>
+                        {order.items.map((item: any, i: number) => (
+                            <div key={i} className="flex justify-between items-start mb-4 border-b border-[var(--border)] pb-4 last:border-0 last:pb-0 last:mb-0">
+                                <div
+                                    className="flex gap-4"
+                                    style={{
+                                        alignItems: 'flex-start',
+                                        maxWidth: '78%',
+                                        padding: '8px 10px',
+                                        borderRadius: 16,
+                                        background: 'rgba(255,255,255,0.018)',
+                                    }}
+                                >
+                                    <div style={{
+                                        minWidth: 38,
+                                        height: 38,
+                                        borderRadius: 12,
+                                        background: 'rgba(255,255,255,0.04)',
+                                        border: '1px solid rgba(255,255,255,0.06)',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        fontSize: 14,
+                                        fontWeight: 800,
+                                        color: '#f8fafc',
+                                        flexShrink: 0,
+                                    }}>
+                                        {item.quantity}x
+                                    </div>
+                                    <div style={{ paddingTop: 2, width: '100%', maxWidth: 280 }}>
+                                        <div className="font-bold" style={{ fontSize: 16, color: '#f8fafc', lineHeight: 1.3, marginBottom: 2 }}>{item.menuItem.name}</div>
+                                        {Array.isArray(item.removals) && item.removals.length > 0 && (
+                                            <div className="text-sm text-danger mt-2" style={{ lineHeight: 1.5 }}>
+                                                Remove: {item.removals.map((removal: any) => removal.labelSnapshot).join(', ')}
+                                            </div>
+                                        )}
+                                        {Array.isArray(item.additions) && item.additions.length > 0 && (
+                                            <div className="text-sm text-success mt-2" style={{ lineHeight: 1.5 }}>
+                                                Add: {item.additions.map((addition: any) => addition.labelSnapshot).join(', ')}
+                                            </div>
+                                        )}
+                                        {item.kitchenNote && <div className="text-warning text-sm mt-2" style={{ lineHeight: 1.5 }}>Preference: {item.kitchenNote}</div>}
+                                        {item.notes && <div className="text-warning text-sm mt-2" style={{ lineHeight: 1.5 }}>Note: {item.notes}</div>}
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
                 </div>
+
+                {(order.status === 'pending' || order.status === 'preparing') && (
+                    <div className="px-5 pt-3 pb-4 border-t border-[var(--border)]" style={{ background: 'rgba(255,255,255,0.02)' }}>
+                        {order.status === 'pending' ? (
+                            <button
+                                className="btn btn-primary w-full justify-center"
+                                style={{ borderRadius: 18, opacity: isUpdating ? 0.8 : 1 }}
+                                onClick={() => updateStatus(order.id, 'preparing')}
+                                disabled={isUpdating}
+                            >
+                                {isUpdating && updatingNextStatus === 'preparing' ? 'Starting...' : 'Start Preparing'}
+                            </button>
+                        ) : (
+                            <button
+                                className="btn btn-success w-full justify-center"
+                                style={{ borderRadius: 18, opacity: isUpdating ? 0.8 : 1 }}
+                                onClick={() => updateStatus(order.id, 'ready')}
+                                disabled={isUpdating}
+                            >
+                                {isUpdating && updatingNextStatus === 'ready'
+                                    ? 'Updating...'
+                                    : <><Check size={16} /> Mark as Ready</>}
+                            </button>
+                        )}
+                    </div>
+                )}
             </div>
         );
     };
@@ -205,54 +397,74 @@ function KitchenPageContent() {
                 </div>
             )}
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(300px, 1fr))', gap: '24px', alignItems: 'start', overflowX: 'auto', paddingBottom: 24, minHeight: '70vh' }}>
-                {/* PENDING COLUMN */}
-                <div ref={incomingRef} style={{ background: 'var(--bg-card)', padding: '16px', borderRadius: 'var(--radius-lg)', display: 'flex', flexDirection: 'column', gap: '16px', minHeight: '100%', border: `1px solid ${getColumnState('pending').borderColor}`, boxShadow: getColumnState('pending').boxShadow, opacity: getColumnState('pending').opacity, transition: 'opacity 0.2s, box-shadow 0.2s, border-color 0.2s' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '2px solid var(--border)', paddingBottom: '12px' }}>
-                        <h3 style={{ fontSize: 16, fontWeight: 'bold' }}>Incoming</h3>
-                        <span className="badge pending">{pendingOrders.length}</span>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(300px, 1fr))', gap: 20, alignItems: 'start', overflowX: 'auto', paddingBottom: 24 }}>
+                    {renderLane({
+                        title: 'Incoming',
+                        count: pendingOrders.length,
+                        orders: pendingOrders,
+                        emptyCopy: 'No active incoming orders.',
+                        badgeClassName: 'pending',
+                        column: 'pending',
+                        laneRef: incomingRef,
+                    })}
+                    {renderLane({
+                        title: 'Preparing',
+                        count: preparingOrders.length,
+                        orders: preparingOrders,
+                        emptyCopy: 'No orders currently being prepared.',
+                        badgeClassName: 'preparing',
+                        column: 'preparing',
+                        laneRef: preparingRef,
+                    })}
+                    {renderLane({
+                        title: 'Ready For Pickup',
+                        count: readyOrders.length,
+                        orders: readyOrders,
+                        emptyCopy: 'No orders waiting for pickup.',
+                        badgeClassName: 'ready',
+                        column: 'ready',
+                        laneRef: readyRef,
+                    })}
+                    <div
+                        ref={servedRef}
+                        style={{
+                            background: 'linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.015)), var(--bg-card)',
+                            padding: '16px',
+                            borderRadius: 24,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '16px',
+                            minHeight: '100%',
+                            border: `1px solid ${getColumnState('served').borderColor}`,
+                            boxShadow: getColumnState('served').boxShadow,
+                            opacity: focusConfig ? getColumnState('served').opacity : 0.88,
+                            transition: 'opacity 0.2s, box-shadow 0.2s, border-color 0.2s',
+                            backdropFilter: 'blur(14px)',
+                        }}
+                    >
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '14px' }}>
+                            <div>
+                                <h3 style={{ fontSize: 18, fontWeight: 800, color: '#f8fafc', margin: 0 }}>Delivered</h3>
+                                <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 4, textTransform: 'uppercase', letterSpacing: 1.1 }}>
+                                    {servedOrders.length === 0 ? 'Queue clear' : `${servedOrders.length} cleared ticket${servedOrders.length === 1 ? '' : 's'}`}
+                                </div>
+                            </div>
+                            <span className="badge" style={{ background: 'rgba(16,185,129,0.16)', color: '#6ee7b7' }}>{servedOrders.length}</span>
+                        </div>
+                        {servedOrders.length > 0 ? servedOrders.map(order => renderOrderCard(order)) : (
+                            <div style={{
+                                padding: '28px 24px',
+                                textAlign: 'center',
+                                color: 'var(--text-muted)',
+                                fontSize: 13,
+                                background: 'rgba(255,255,255,0.03)',
+                                borderRadius: 18,
+                                border: '1px dashed rgba(255,255,255,0.06)',
+                            }}>
+                                No delivered orders yet.
+                            </div>
+                        )}
                     </div>
-                    {pendingOrders.map(order => renderOrderCard(order))}
-                    {pendingOrders.length === 0 && (
-                        <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13, background: 'var(--surface-active)', borderRadius: 'var(--radius-md)' }}>No active incoming orders.</div>
-                    )}
-                </div>
-
-                {/* PREPARING COLUMN */}
-                <div ref={preparingRef} style={{ background: 'var(--bg-card)', padding: '16px', borderRadius: 'var(--radius-lg)', display: 'flex', flexDirection: 'column', gap: '16px', minHeight: '100%', border: `1px solid ${getColumnState('preparing').borderColor}`, boxShadow: getColumnState('preparing').boxShadow, opacity: getColumnState('preparing').opacity, transition: 'opacity 0.2s, box-shadow 0.2s, border-color 0.2s' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '2px solid var(--border)', paddingBottom: '12px' }}>
-                        <h3 style={{ fontSize: 16, fontWeight: 'bold' }}>Preparing</h3>
-                        <span className="badge preparing">{preparingOrders.length}</span>
-                    </div>
-                    {preparingOrders.map(order => renderOrderCard(order))}
-                    {preparingOrders.length === 0 && (
-                        <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13, background: 'var(--surface-active)', borderRadius: 'var(--radius-md)' }}>No orders currently being prepared.</div>
-                    )}
-                </div>
-
-                {/* READY COLUMN */}
-                <div ref={readyRef} style={{ background: 'var(--bg-card)', padding: '16px', borderRadius: 'var(--radius-lg)', display: 'flex', flexDirection: 'column', gap: '16px', minHeight: '100%', border: `1px solid ${getColumnState('ready').borderColor}`, boxShadow: getColumnState('ready').boxShadow, opacity: getColumnState('ready').opacity, transition: 'opacity 0.2s, box-shadow 0.2s, border-color 0.2s' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '2px solid var(--border)', paddingBottom: '12px' }}>
-                        <h3 style={{ fontSize: 16, fontWeight: 'bold' }}>Ready For Pickup</h3>
-                        <span className="badge ready">{readyOrders.length}</span>
-                    </div>
-                    {readyOrders.map(order => renderOrderCard(order))}
-                    {readyOrders.length === 0 && (
-                        <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13, background: 'var(--surface-active)', borderRadius: 'var(--radius-md)' }}>No orders waiting for pickup.</div>
-                    )}
-                </div>
-
-                {/* DELIVERED COLUMN */}
-                <div ref={servedRef} style={{ background: 'var(--bg-card)', padding: '16px', borderRadius: 'var(--radius-lg)', display: 'flex', flexDirection: 'column', gap: '16px', minHeight: '100%', border: `1px solid ${getColumnState('served').borderColor}`, boxShadow: getColumnState('served').boxShadow, opacity: focusConfig ? getColumnState('served').opacity : 0.8, transition: 'opacity 0.2s, box-shadow 0.2s, border-color 0.2s' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '2px solid var(--border)', paddingBottom: '12px' }}>
-                        <h3 style={{ fontSize: 16, fontWeight: 'bold' }}>Delivered</h3>
-                        <span className="badge" style={{ background: 'var(--success)', color: 'white' }}>{servedOrders.length}</span>
-                    </div>
-                    {servedOrders.map(order => renderOrderCard(order))}
-                    {servedOrders.length === 0 && (
-                        <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13, background: 'var(--surface-active)', borderRadius: 'var(--radius-md)' }}>No delivered orders yet.</div>
-                    )}
-                </div>
             </div>
         </AppLayout>
     );

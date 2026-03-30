@@ -1,6 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import { useEffect, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import {
     LayoutDashboard, UtensilsCrossed, ShoppingCart, Table2, CalendarDays,
@@ -9,7 +10,7 @@ import {
 
 const navItems = [
     { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', section: 'main', roles: ['admin', 'manager', 'waiter'] },
-    { href: '/orders', icon: ShoppingCart, label: 'Orders', section: 'main', roles: ['manager', 'waiter'] },
+    { href: '/orders', icon: ShoppingCart, label: 'Orders', section: 'main', roles: ['manager'] },
     { href: '/tables', icon: Table2, label: 'Tables', section: 'main', roles: ['admin', 'manager', 'waiter'] },
     { href: '/menu', icon: UtensilsCrossed, label: 'Menu', section: 'main', roles: ['admin', 'manager'] },
     { href: '/reservations', icon: CalendarDays, label: 'Reservations', section: 'main', roles: ['admin', 'manager'] },
@@ -21,10 +22,26 @@ const navItems = [
 
 export default function Sidebar({
     pendingOrders = 0,
+    readyOrders = [],
+    highlightActiveOrders = false,
+    onServeReadyOrder,
+    showOverlay = true,
     isOpen = false,
     onClose,
 }: {
     pendingOrders?: number;
+    readyOrders?: Array<{
+        id: string;
+        orderNumber: string | number;
+        type: string;
+        items?: Array<unknown>;
+        table?: {
+            number?: string | number;
+        } | null;
+    }>;
+    highlightActiveOrders?: boolean;
+    onServeReadyOrder?: (id: string) => void | Promise<void>;
+    showOverlay?: boolean;
     isOpen?: boolean;
     onClose?: () => void;
 }) {
@@ -39,13 +56,19 @@ export default function Sidebar({
 
     const sections = ['main', 'operations'];
     const sectionLabels: Record<string, string> = { main: 'Operations', operations: 'Management' };
+    const activeOrderRef = useRef<HTMLDivElement | null>(null);
 
     const getInitials = (name: string) => name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
     const roleLabel = user?.role ? user.role.charAt(0).toUpperCase() + user.role.slice(1) : 'Guest';
 
+    useEffect(() => {
+        if (!highlightActiveOrders || !isOpen) return;
+        activeOrderRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, [highlightActiveOrders, isOpen]);
+
     return (
         <>
-            <div className={`sidebar-overlay ${isOpen ? 'show' : ''}`} onClick={onClose} />
+            <div className={`sidebar-overlay ${isOpen && showOverlay ? 'show' : ''}`} onClick={onClose} />
             <aside className={`sidebar ${isOpen ? 'open' : ''}`}>
                 <div className="sidebar-logo">
                     <div className="logo-mark">
@@ -60,15 +83,52 @@ export default function Sidebar({
                     </button>
                 </div>
 
-                <div className="sidebar-shift-card">
-                    <span className="sidebar-shift-label">Live service</span>
-                    <strong className="sidebar-shift-value">Dinner cadence</strong>
-                    <p className="sidebar-shift-copy">Keep reservations, tables, tickets, and checkout moving in one rhythm.</p>
-                    <div className="sidebar-shift-meta">
-                        <span>{roleLabel}</span>
-                        <span>Always on</span>
+                {user?.role !== 'waiter' && (
+                    <div className="sidebar-shift-card">
+                        <span className="sidebar-shift-label">Live service</span>
+                        <strong className="sidebar-shift-value">Dinner cadence</strong>
+                        <p className="sidebar-shift-copy">Keep reservations, tables, tickets, and checkout moving in one rhythm.</p>
+                        <div className="sidebar-shift-meta">
+                            <span>{roleLabel}</span>
+                            <span>Always on</span>
+                        </div>
                     </div>
-                </div>
+                )}
+
+                {user?.role === 'waiter' && readyOrders.length > 0 && (
+                    <div
+                        ref={activeOrderRef}
+                        className={`sidebar-pickup-card${highlightActiveOrders ? ' sidebar-pickup-card--highlight' : ''}`}
+                    >
+                        <div className="sidebar-pickup-header">
+                            <span className="sidebar-pickup-label">Active Order</span>
+                            <span className="sidebar-pickup-count">{readyOrders.length} ready</span>
+                        </div>
+                        <p className="sidebar-pickup-copy">
+                            {readyOrders.length === 1
+                                ? 'Ready to serve now.'
+                                : 'Ready orders waiting on your station.'}
+                        </p>
+                        <div className="sidebar-pickup-list">
+                            {readyOrders.slice(0, 5).map((order) => (
+                                <button
+                                    key={order.id}
+                                    type="button"
+                                    className="sidebar-pickup-item"
+                                    onClick={() => onServeReadyOrder?.(order.id)}
+                                >
+                                    <div className="sidebar-pickup-item-copy">
+                                        <div className="sidebar-pickup-order">Order #{order.orderNumber}</div>
+                                        <div className="sidebar-pickup-detail">
+                                            {order.type === 'dine-in' ? `Table ${order.table?.number}` : 'Takeaway'}
+                                        </div>
+                                    </div>
+                                    <span className="sidebar-pickup-action">Serve</span>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )}
 
                 <nav className="sidebar-nav">
                     {sections.map(section => {

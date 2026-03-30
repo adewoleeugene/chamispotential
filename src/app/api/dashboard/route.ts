@@ -3,6 +3,10 @@ import { prisma } from '@/lib/prisma';
 import { getRequestUser } from '@/lib/auth';
 import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays } from 'date-fns';
 import { POPULARITY_LOOKBACK_DAYS, summarizeMenuPopularity } from '@/lib/menu-popularity';
+import { getRecognizedRevenueWhere } from '@/lib/revenue';
+import { buildFinancialAnalytics } from '@/lib/restaurant-analytics';
+import type { CostMethod } from '@/lib/profitability';
+import { getTableDisplayStatus } from '@/lib/table-status';
 
 export async function GET(req: NextRequest) {
     const user = await getRequestUser(req);
@@ -14,6 +18,11 @@ export async function GET(req: NextRequest) {
     const waiterWhere = isWaiter ? { userId: user.id } : {};
 
     const now = new Date();
+    const url = new URL(req.url);
+    const requestedCostMethod = url.searchParams.get('costMethod');
+    const costMethod: CostMethod = user.role === 'admin' && (requestedCostMethod === 'fifo' || requestedCostMethod === 'lifo')
+        ? requestedCostMethod
+        : 'weighted_average_as_of_sale_date';
     const todayStart = startOfDay(now);
     const todayEnd = endOfDay(now);
     const weekStart = startOfWeek(now);
@@ -38,10 +47,12 @@ export async function GET(req: NextRequest) {
         allMenuItems,
         recentOrders,
         lowInventory,
-        dailyRevenue,
-        monthDailyRevenue,
         orderTypeMix,
         activeTablesQuery,
+        inventoryCostFallbacks,
+        purchases,
+        paidOrdersThisWeek,
+        paidOrdersThisMonth,
     ] = await Promise.all([
         prisma.order.count({ where: { createdAt: { gte: todayStart, lte: todayEnd }, status: { not: 'cancelled' } } }),
         prisma.order.count({ where: { createdAt: { gte: startOfDay(yesterday), lte: endOfDay(yesterday) }, status: { not: 'cancelled' } } }),
@@ -50,10 +61,15 @@ export async function GET(req: NextRequest) {
         prisma.order.count({ where: { status: 'pending' } }),
         prisma.order.count({ where: { ...waiterWhere, status: { in: isWaiter ? ['pending', 'preparing'] : ['pending', 'preparing', 'ready'] } } }),
         prisma.order.count({ where: { ...waiterWhere, status: 'ready' } }),
-        prisma.order.aggregate({ where: { createdAt: { gte: todayStart, lte: todayEnd }, status: { not: 'cancelled' } }, _sum: { total: true } }),
-        prisma.order.aggregate({ where: { createdAt: { gte: monthStart, lte: monthEnd }, status: { not: 'cancelled' } }, _sum: { total: true } }),
+        prisma.order.aggregate({ where: getRecognizedRevenueWhere({ createdAt: { gte: todayStart, lte: todayEnd } }), _sum: { total: true } }),
+        prisma.order.aggregate({ where: getRecognizedRevenueWhere({ createdAt: { gte: monthStart, lte: monthEnd } }), _sum: { total: true } }),
         prisma.order.count({ where: { createdAt: { gte: monthStart, lte: monthEnd } } }),
-        prisma.table.groupBy({ by: ['status'], _count: true }),
+        prisma.table.findMany({
+            select: {
+                id: true,
+                status: true,
+            },
+        }),
         prisma.orderItem.findMany({
             where: {
                 order: {
@@ -79,33 +95,9 @@ export async function GET(req: NextRequest) {
             where: { currentStock: { lte: prisma.inventory.fields.minStock } },
             take: 5,
         }),
-        // Last 7 days revenue
-        Promise.all(
-            Array.from({ length: 7 }, (_, i) => {
-                const day = subDays(now, 6 - i);
-                return prisma.order.aggregate({
-                    where: { createdAt: { gte: startOfDay(day), lte: endOfDay(day) }, status: { not: 'cancelled' } },
-                    _sum: { total: true },
-                }).then((r) => ({ date: day.toISOString().split('T')[0], revenue: r._sum.total || 0 }));
-            })
-        ),
-        Promise.all(
-            Array.from({ length: 30 }, (_, i) => {
-                const day = subDays(now, 29 - i);
-                return prisma.order.aggregate({
-                    where: { createdAt: { gte: startOfDay(day), lte: endOfDay(day) }, status: { not: 'cancelled' } },
-                    _sum: { total: true },
-                    _count: true,
-                }).then((r) => ({
-                    date: day.toISOString().split('T')[0],
-                    revenue: r._sum.total || 0,
-                    orders: r._count || 0,
-                }));
-            })
-        ),
         prisma.order.groupBy({
             by: ['type'],
-            where: { createdAt: { gte: monthStart, lte: monthEnd }, status: { not: 'cancelled' } },
+            where: getRecognizedRevenueWhere({ createdAt: { gte: monthStart, lte: monthEnd } }),
             _count: true,
             _sum: { total: true },
         }),
@@ -123,6 +115,54 @@ export async function GET(req: NextRequest) {
                     orderBy: { createdAt: 'desc' },
                 }
             }
+        }),
+        prisma.inventory.findMany({
+            select: { id: true, cost: true },
+        }),
+        prisma.inventoryPurchase.findMany({
+            where: { purchasedAt: { lte: monthEnd } },
+            select: {
+                inventoryId: true,
+                quantity: true,
+                unitCost: true,
+                totalCost: true,
+                purchasedAt: true,
+            },
+            orderBy: { purchasedAt: 'asc' },
+        }),
+        prisma.order.findMany({
+            where: getRecognizedRevenueWhere({ createdAt: { gte: weekStart, lte: weekEnd } }),
+            include: {
+                items: {
+                    include: {
+                        menuItem: {
+                            include: {
+                                category: true,
+                                recipeIngredients: true,
+                            },
+                        },
+                        removals: true,
+                        additions: true,
+                    },
+                },
+            },
+        }),
+        prisma.order.findMany({
+            where: getRecognizedRevenueWhere({ createdAt: { gte: monthStart, lte: monthEnd } }),
+            include: {
+                items: {
+                    include: {
+                        menuItem: {
+                            include: {
+                                category: true,
+                                recipeIngredients: true,
+                            },
+                        },
+                        removals: true,
+                        additions: true,
+                    },
+                },
+            },
         }),
     ]);
 
@@ -144,15 +184,33 @@ export async function GET(req: NextRequest) {
 
     const mostOrderedItem = [...itemPerformance].sort((a, b) => b.quantity - a.quantity)[0] || null;
     const leastOrderedItem = [...itemPerformance].sort((a, b) => a.quantity - b.quantity)[0] || null;
-    const peakRevenueDay = [...monthDailyRevenue].sort((a, b) => b.revenue - a.revenue)[0] || null;
     const slowMovingItems = [...itemPerformance].sort((a, b) => a.quantity - b.quantity).slice(0, 5);
-    const avgTicket = monthOrders > 0 ? (monthRevenue._sum.total || 0) / monthOrders : 0;
+    const weeklyFinancials = buildFinancialAnalytics({
+        range: 'week',
+        start: weekStart,
+        end: weekEnd,
+        orders: paidOrdersThisWeek,
+        purchases,
+        inventory: inventoryCostFallbacks,
+        costMethod,
+    });
+    const monthlyFinancials = buildFinancialAnalytics({
+        range: 'month',
+        start: monthStart,
+        end: monthEnd,
+        orders: paidOrdersThisMonth,
+        purchases,
+        inventory: inventoryCostFallbacks,
+        costMethod,
+    });
+    const peakRevenueDay = [...monthlyFinancials.trend].sort((a, b) => b.netSales - a.netSales)[0] || null;
+    const avgTicket = monthlyFinancials.summary.avgTicket;
 
     const decisionInsights = [
         peakRevenueDay
             ? {
                 title: 'Peak revenue day',
-                detail: `${peakRevenueDay.date} brought in ${peakRevenueDay.revenue.toFixed(2)} across ${peakRevenueDay.orders} orders.`,
+                detail: `${peakRevenueDay.label} brought in ${peakRevenueDay.netSales.toFixed(2)} in net sales across ${peakRevenueDay.orders} paid orders.`,
               }
             : null,
         mostOrderedItem
@@ -175,8 +233,13 @@ export async function GET(req: NextRequest) {
             : null,
     ].filter(Boolean);
 
+    const activeTableIds = new Set(activeTablesQuery.map((table) => table.id));
     const tableStatusMap = tableStats.reduce<Record<string, number>>((acc, t) => {
-        acc[t.status] = (t._count as number);
+        const displayStatus = getTableDisplayStatus({
+            status: t.status,
+            activeOrderCount: activeTableIds.has(t.id) ? 1 : 0,
+        });
+        acc[displayStatus] = (acc[displayStatus] || 0) + 1;
         return acc;
     }, {});
 
@@ -196,6 +259,23 @@ export async function GET(req: NextRequest) {
             peakDay: peakRevenueDay,
             averageTicket: avgTicket,
         },
+        finance: {
+            costMethod,
+            week: {
+                netSales: weeklyFinancials.summary.netSales,
+                ingredientSpend: weeklyFinancials.summary.ingredientSpend,
+                cogs: weeklyFinancials.summary.cogs,
+                grossProfit: weeklyFinancials.summary.grossProfit,
+                grossMarginPct: weeklyFinancials.summary.grossMarginPct,
+            },
+            month: {
+                netSales: monthlyFinancials.summary.netSales,
+                ingredientSpend: monthlyFinancials.summary.ingredientSpend,
+                cogs: monthlyFinancials.summary.cogs,
+                grossProfit: monthlyFinancials.summary.grossProfit,
+                grossMarginPct: monthlyFinancials.summary.grossMarginPct,
+            },
+        },
         customers: totalCustomers,
         tables: tableStatusMap,
         activeTablesCount: activeTablesQuery.length,
@@ -207,8 +287,11 @@ export async function GET(req: NextRequest) {
         orderTypeMix,
         recentOrders,
         lowInventory,
-        dailyRevenue,
-        monthDailyRevenue,
+        dailyRevenue: weeklyFinancials.trend,
+        monthDailyRevenue: monthlyFinancials.trend,
+        itemProfitability: monthlyFinancials.itemProfitability,
+        highMarginItems: monthlyFinancials.highMarginItems,
+        lowMarginItems: monthlyFinancials.lowMarginItems,
         decisionInsights,
     });
 }
