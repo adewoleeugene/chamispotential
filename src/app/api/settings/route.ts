@@ -3,7 +3,12 @@ import { prisma } from '@/lib/prisma';
 import { getRequestUser } from '@/lib/auth';
 import { SETTINGS_DEFAULTS, normaliseSettings } from '@/lib/settings';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const user = await getRequestUser(req);
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const rows = await prisma.settings.findMany({
     where: { key: { in: Object.keys(SETTINGS_DEFAULTS) } },
   });

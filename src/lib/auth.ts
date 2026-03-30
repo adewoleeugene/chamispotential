@@ -62,12 +62,25 @@ export function createToken(payload: JwtPayload): string {
     return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
 }
 
-export function verifyToken(token: string): JwtPayload | null {
+export interface VerifiedPayload extends JwtPayload {
+    iat: number;
+    exp: number;
+}
+
+export function verifyToken(token: string): VerifiedPayload | null {
     try {
-        return jwt.verify(token, JWT_SECRET) as JwtPayload;
+        return jwt.verify(token, JWT_SECRET) as VerifiedPayload;
     } catch {
         return null;
     }
+}
+
+const TOKEN_LIFETIME_SECONDS = 60 * 60 * 24 * 7; // 7 days
+const REFRESH_AFTER_SECONDS = TOKEN_LIFETIME_SECONDS / 2; // 3.5 days
+
+export function shouldRefreshToken(payload: VerifiedPayload): boolean {
+    const age = Math.floor(Date.now() / 1000) - payload.iat;
+    return age > REFRESH_AFTER_SECONDS;
 }
 
 async function resolveAuthenticatedUser(token: string): Promise<AuthenticatedUser | null> {

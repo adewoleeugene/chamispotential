@@ -34,7 +34,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     const nextStatus = typeof data.status === 'string' ? data.status : null;
     const isKitchenTransition = nextStatus === 'preparing' || nextStatus === 'ready';
-    const isWaiterAction = Boolean(data.items) || data.action === 'confirm_manual_payment' || nextStatus === 'served' || nextStatus === 'cancelled';
+    const isWaiterAction = Boolean(data.items) || data.action === 'confirm_manual_payment' || data.confirmManualPayment === true || nextStatus === 'served' || nextStatus === 'cancelled';
 
     if (!['waiter', 'kitchen'].includes(user.role)) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
@@ -117,7 +117,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
                 throw new Error('ORDER_NOT_FOUND');
             }
 
-            if (data.action === 'confirm_manual_payment') {
+            if (data.action === 'confirm_manual_payment' || data.confirmManualPayment === true) {
                 await tx.order.update({
                     where: { id },
                     data: {

@@ -80,8 +80,20 @@ export async function createOrderWithItems(tx: PrismaTx, input: CreateOrderInput
       total,
       paymentMethod: input.paymentMethod || null,
       paymentStatus: input.paymentStatus || 'unpaid',
-      items: { create: orderItems },
     },
+  });
+
+  if (orderItems.length > 0) {
+    await tx.orderItem.createMany({
+      data: orderItems.map((item) => ({
+        orderId: createdOrder.id,
+        ...item,
+      })),
+    });
+  }
+
+  const fullOrder = await tx.order.findUniqueOrThrow({
+    where: { id: createdOrder.id },
     include: {
       table: true,
       user: { select: { name: true, id: true } },
@@ -100,7 +112,7 @@ export async function createOrderWithItems(tx: PrismaTx, input: CreateOrderInput
     }
   }
 
-  return createdOrder;
+  return fullOrder;
 }
 
 export function isOperationalOrderStatus(status: string) {

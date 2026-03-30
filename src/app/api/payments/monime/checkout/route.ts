@@ -34,53 +34,51 @@ export async function POST(req: NextRequest) {
   let createdAttemptId: string | null = null;
 
   try {
-    const paymentAttempt = await prisma.$transaction(async (tx) => {
-      const createdOrder = await createOrderWithItems(tx, {
-        tableId,
-        userId: user.id,
-        type,
-        notes,
-        customerName,
-        customerPhone,
-        discount,
-        paymentMethod: 'monime',
-        paymentStatus: 'processing',
-        status: 'payment_pending_confirmation',
-        applySideEffects: false,
-        items,
-      });
+    const createdOrder = await createOrderWithItems(prisma, {
+      tableId,
+      userId: user.id,
+      type,
+      notes,
+      customerName,
+      customerPhone,
+      discount,
+      paymentMethod: 'monime',
+      paymentStatus: 'processing',
+      status: 'payment_pending_confirmation',
+      applySideEffects: false,
+      items,
+    });
 
-      const attemptCount = await tx.paymentAttempt.count({
-        where: { orderId: createdOrder.id, provider: 'monime' },
-      });
-      const attemptNumber = attemptCount + 1;
-      const reference = `order-${createdOrder.id}`;
-      const idempotencyKey = `${reference}:attempt:${attemptNumber}`;
+    const attemptCount = await prisma.paymentAttempt.count({
+      where: { orderId: createdOrder.id, provider: 'monime' },
+    });
+    const attemptNumber = attemptCount + 1;
+    const reference = `order-${createdOrder.id}`;
+    const idempotencyKey = `${reference}:attempt:${attemptNumber}`;
 
-      return tx.paymentAttempt.create({
-        data: {
+    const paymentAttempt = await prisma.paymentAttempt.create({
+      data: {
+        orderId: createdOrder.id,
+        provider: 'monime',
+        attemptNumber,
+        reference,
+        idempotencyKey,
+        callbackState,
+        status: 'pending',
+        currency: config.currency,
+        amountMinor: toMinorUnits(createdOrder.total),
+        metadataJson: JSON.stringify({
           orderId: createdOrder.id,
-          provider: 'monime',
-          attemptNumber,
-          reference,
-          idempotencyKey,
-          callbackState,
-          status: 'pending',
-          currency: config.currency,
-          amountMinor: toMinorUnits(createdOrder.total),
-          metadataJson: JSON.stringify({
-            orderId: createdOrder.id,
-            orderNumber: createdOrder.orderNumber,
-          }),
-        },
-        include: {
-          order: {
-            include: {
-              items: { include: { menuItem: true } },
-            },
+          orderNumber: createdOrder.orderNumber,
+        }),
+      },
+      include: {
+        order: {
+          include: {
+            items: { include: { menuItem: true } },
           },
         },
-      });
+      },
     });
     createdAttemptId = paymentAttempt.id;
 
