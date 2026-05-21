@@ -12,8 +12,7 @@ model User {
   phone     String?
   name      String
   password  String
-  role      String   @default("staff") // admin, manager, staff, cashier, kitchen
-  avatar    String?
+  role      String   @default("waiter") // admin, manager, waiter, cashier, kitchen
   isActive  Boolean  @default(true)
   failedLoginAttempts Int      @default(0)
   lastFailedLoginAt   DateTime?
@@ -23,8 +22,23 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  orders    Order[]
-  shifts    Shift[]
+  orders              Order[]
+  pushSubscriptions   PushSubscription[]
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model Category {
@@ -265,9 +279,22 @@ model Inventory {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  recipes      RecipeIngredient[]
-  extraOptions MenuItemExtraOption[]
-  purchases    InventoryPurchase[]
+  recipes        RecipeIngredient[]
+  extraOptions   MenuItemExtraOption[]
+  purchases      InventoryPurchase[]
+  extraCatalogs  ExtraCatalog[]
+}
+
+model ExtraCatalog {
+  id              String   @id @default(cuid())
+  name            String
+  inventoryId     String
+  defaultQuantity Float
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  inventory Inventory @relation(fields: [inventoryId], references: [id])
 }
 
 model InventoryPurchase {
@@ -286,20 +313,6 @@ model InventoryPurchase {
 
   @@index([inventoryId, purchasedAt])
   @@index([purchasedAt])
-}
-
-model Shift {
-  id        String    @id @default(cuid())
-  userId    String
-  startTime DateTime
-  endTime   DateTime?
-  hoursWorked Float?
-  notes     String?
-  status    String    @default("scheduled") // scheduled, active, completed
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-
-  user User @relation(fields: [userId], references: [id])
 }
 
 model Expense {

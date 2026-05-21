@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { formatCurrency } from '@/lib/currency';
 import { getTableDisplayStatus, TABLE_STATUS_COLORS } from '@/lib/table-status';
+import { isWaiterRole } from '@/lib/roleRoutes';
 
 type AnalyticsRange = 'day' | 'week' | 'month';
 
@@ -689,7 +690,7 @@ export default function TablesPage() {
         };
     }, [persistTablePosition, syncDragPreview]);
 
-    const isWaiterWorkspace = user?.role === 'waiter' && isCompactViewport;
+    const isWaiterWorkspace = isWaiterRole(user?.role) && isCompactViewport;
 
     const getActiveScrollContainer = () => {
         if (isWaiterWorkspace && pageScrollRef.current) return pageScrollRef.current;
@@ -766,12 +767,12 @@ export default function TablesPage() {
             setSelectedTable(table);
             return;
         }
-        if (mergeStep === 'idle' && user?.role !== 'waiter') {
+        if (mergeStep === 'idle' && !isWaiterRole(user?.role)) {
             toast('info', 'Only waiters can take or edit orders.');
             return;
         }
         if (mergeStep === 'selectSource') {
-            if (table.status !== 'available') {
+            if (getTableDisplayStatus({ status: table.status, activeOrderCount: table.orders?.length || 0 }) !== 'available') {
                 toast('error', `${table.section} is not available — only free tables can be merged`);
                 return;
             }
@@ -784,7 +785,7 @@ export default function TablesPage() {
                 toast('error', 'Select a different table');
                 return;
             }
-            if (table.status !== 'available') {
+            if (getTableDisplayStatus({ status: table.status, activeOrderCount: table.orders?.length || 0 }) !== 'available') {
                 toast('error', `${table.section} is not available — only free tables can be merged`);
                 return;
             }
@@ -863,7 +864,7 @@ export default function TablesPage() {
     return (
         <AppLayout>
             <div
-                className={`floor-page ${user?.role === 'waiter' ? 'floor-page--waiter' : ''}`}
+                className={`floor-page ${isWaiterRole(user?.role) ? 'floor-page--waiter' : ''}`}
                 onPointerDown={startCanvasPan}
                 onPointerMove={moveCanvasPan}
                 onPointerUp={endCanvasPan}
@@ -1237,7 +1238,7 @@ export default function TablesPage() {
             </div>
 
             {/* Order modal (disabled during merge mode) */}
-            {selectedTable && mergeStep === 'idle' && user?.role === 'waiter' && (
+            {selectedTable && mergeStep === 'idle' && isWaiterRole(user?.role) && (
                 <OrderModal
                     table={selectedTable}
                     onRefresh={fetchTables}

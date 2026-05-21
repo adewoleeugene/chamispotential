@@ -14,3 +14,13 @@ export async function getTaxRateDecimal() {
 
   return percent / 100;
 }
+
+export async function isSettingEnabled(key: string): Promise<boolean> {
+  const row = await prisma.settings.findUnique({
+    where: { key },
+    select: { value: true },
+  });
+  const fallback = (SETTINGS_DEFAULTS as Record<string, string>)[key];
+  const value = row?.value ?? fallback;
+  return value === 'true';
+}

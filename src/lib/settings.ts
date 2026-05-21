@@ -1,5 +1,6 @@
 export const SETTINGS_DEFAULTS = {
-  restaurantName: 'Things&Somethings',
+  restaurantName: '',
+  logoDataUrl: '',
   currencySymbol: 'Le',
   taxRate: '10',
   notifyNewOrders: 'true',

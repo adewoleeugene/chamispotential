@@ -18,36 +18,20 @@ async function main() {
     console.log('Seeding database...');
     console.log('Using DB URL from DATABASE_URL');
 
-    // Create admin user
-    const adminPassword = await bcrypt.hash('admin123', 12);
+    // Seed a single admin account. Default password is 'admin' and the user
+    // is forced to change it at first login. From there, the admin creates
+    // all other users via the Staff page.
+    const adminPassword = await bcrypt.hash('admin', 12);
     await prisma.user.upsert({
         where: { email: 'admin@rms.com' },
         update: {},
-        create: { email: 'admin@rms.com', name: 'Admin User', password: adminPassword, role: 'admin' },
-    });
-
-    // Create manager
-    const managerPassword = await bcrypt.hash('manager123', 12);
-    await prisma.user.upsert({
-        where: { email: 'manager@rms.com' },
-        update: {},
-        create: { email: 'manager@rms.com', name: 'Sarah Manager', password: managerPassword, role: 'manager' },
-    });
-
-    // Create waiter
-    const waiterPassword = await bcrypt.hash('waiter123', 12);
-    await prisma.user.upsert({
-        where: { email: 'waiter@rms.com' },
-        update: {},
-        create: { email: 'waiter@rms.com', name: 'James Waiter', password: waiterPassword, role: 'waiter' },
-    });
-
-    // Create kitchen staff
-    const kitchenPassword = await bcrypt.hash('kitchen123', 12);
-    await prisma.user.upsert({
-        where: { email: 'kitchen@rms.com' },
-        update: {},
-        create: { email: 'kitchen@rms.com', name: 'Chef Marcus', password: kitchenPassword, role: 'kitchen' },
+        create: {
+            email: 'admin@rms.com',
+            name: 'Restaurant Admin',
+            password: adminPassword,
+            role: 'admin',
+            mustChangePassword: true,
+        },
     });
 
     // Create categories

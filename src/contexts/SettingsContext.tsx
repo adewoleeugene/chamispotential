@@ -20,7 +20,8 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
             const data = await res.json();
             if (res.ok) {
                 setSettings({
-                    restaurantName: data.restaurantName || SETTINGS_DEFAULTS.restaurantName,
+                    restaurantName: data.restaurantName ?? SETTINGS_DEFAULTS.restaurantName,
+                    logoDataUrl: data.logoDataUrl ?? SETTINGS_DEFAULTS.logoDataUrl,
                     currencySymbol: data.currencySymbol || SETTINGS_DEFAULTS.currencySymbol,
                     taxRate: data.taxRate || SETTINGS_DEFAULTS.taxRate,
                     notifyNewOrders: data.notifyNewOrders || SETTINGS_DEFAULTS.notifyNewOrders,

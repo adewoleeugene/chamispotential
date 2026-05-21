@@ -10,14 +10,15 @@ import {
 
 export async function POST(req: NextRequest) {
     try {
-        const { email, password } = await req.json();
-        const normalizedEmail = email?.toLowerCase().trim();
+        const body = await req.json();
+        const identifier = (body.username ?? body.email)?.toLowerCase().trim();
+        const { password } = body;
 
-        if (!normalizedEmail || !password) {
-            return NextResponse.json({ error: 'Email and password required' }, { status: 400 });
+        if (!identifier || !password) {
+            return NextResponse.json({ error: 'Username and password required' }, { status: 400 });
         }
 
-        const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+        const user = await prisma.user.findUnique({ where: { email: identifier } });
 
         if (!user || !user.isActive) {
             return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });

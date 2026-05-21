@@ -6,6 +6,7 @@ import { createOrderWithItems } from '@/lib/orders';
 import { createMonimeCheckoutSession, getMonimeConfig } from '@/lib/monime';
 import { toMinorUnits } from '@/lib/monime-payments';
 import { normalizeCustomizationInputs } from '@/lib/order-customization';
+import { isWaiterRole } from '@/lib/roleRoutes';
 
 function getPublicAppUrl(req: NextRequest) {
   const configuredUrl = process.env.NEXTAUTH_URL;
@@ -19,7 +20,7 @@ function getPublicAppUrl(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const user = await getRequestUser(req);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (user.role !== 'waiter') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  if (!isWaiterRole(user.role)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   const body = await req.json();
   const { orderId, tableId, items, type, notes, customerName, customerPhone, discount } = body;

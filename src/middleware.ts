@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const PUBLIC_PAGES = ['/login', '/change-password', '/payments/monime/success', '/payments/monime/cancel'];
+const PUBLIC_PAGES = ['/login', '/change-password', '/payments/monime/success', '/payments/monime/cancel', '/offline.html'];
 const PUBLIC_API = ['/api/auth/login', '/api/auth/logout', '/api/webhooks/'];
 
 function isPublicPage(pathname: string) {

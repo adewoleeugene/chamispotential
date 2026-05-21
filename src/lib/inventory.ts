@@ -136,13 +136,14 @@ async function applyUsageDelta(
 export async function consumeInventoryForOrder(
   db: InventoryMutationClient,
   items: PersistedOrderLineItem[]
-) {
+): Promise<string[]> {
   const usage = await getEffectiveUsageByInventory(db, items);
   const stockDelta = new Map(
     [...usage.entries()].map(([inventoryId, quantityUsed]) => [inventoryId, -quantityUsed])
   );
 
   await applyUsageDelta(db, stockDelta);
+  return [...usage.keys()];
 }
 
 export async function restoreInventoryForOrder(

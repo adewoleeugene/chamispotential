@@ -26,7 +26,6 @@ export interface AuthenticatedUser {
     email: string;
     role: string;
     name: string;
-    avatar?: string | null;
     isActive: boolean;
     mustChangePassword: boolean;
     sessionVersion: number;
@@ -94,7 +93,6 @@ async function resolveAuthenticatedUser(token: string): Promise<AuthenticatedUse
             email: true,
             role: true,
             name: true,
-            avatar: true,
             isActive: true,
             mustChangePassword: true,
             sessionVersion: true,

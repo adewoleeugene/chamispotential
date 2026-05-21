@@ -1,11 +1,18 @@
 'use client';
 import React, { useCallback, useEffect, useState } from 'react';
 import AppLayout from '@/components/AppLayout';
-import { Plus, Edit2, Trash2, Search, Utensils, X, Save, ChefHat, Info } from 'lucide-react';
+import { Plus, Edit2, Trash2, Search, Utensils, X, Save, ChefHat, Info, Flame, Tag } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSettings } from '@/contexts/SettingsContext';
 import { formatCurrency } from '@/lib/currency';
+import { Button } from '@/components/ui/button';
+import { IconHint } from '@/components/ui/tooltip';
+import { Input } from '@/components/ui/input';
+import { FormField } from '@/components/patterns/form-field';
+import {
+    Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
 
 type Category = {
     id: string;
@@ -110,6 +117,9 @@ export default function MenuPage() {
     const [ingredientDrafts, setIngredientDrafts] = useState<IngredientDraft[]>([createIngredientDraft()]);
     const [extraOptions, setExtraOptions] = useState<ExtraOption[]>([]);
     const [extraDrafts, setExtraDrafts] = useState<ExtraDraft[]>([createExtraDraft()]);
+    const [extrasCatalog, setExtrasCatalog] = useState<Array<{ id: string; name: string; inventoryId: string; defaultQuantity: number; inventory: { id: string; name: string; unit: string } }>>([]);
+    const [isExtraCatalogModalOpen, setIsExtraCatalogModalOpen] = useState(false);
+    const [extraCatalogForm, setExtraCatalogForm] = useState({ name: '', inventoryId: '', defaultQuantity: '' });
     const canManageMenu = user?.role === 'admin' || user?.role === 'manager';
 
     const buildItemPayload = () => ({
@@ -122,19 +132,22 @@ export default function MenuPage() {
 
     const fetchData = useCallback(async () => {
         try {
-            const [m, c, i] = await Promise.all([
-                fetch('/api/menu').then(r => r.json()),
-                fetch('/api/categories').then(r => r.json()),
-                fetch('/api/inventory').then(r => r.json())
+            const [m, c, i, ex] = await Promise.all([
+                fetch('/api/menu').then(r => r.ok ? r.json() : []).catch(() => []),
+                fetch('/api/categories').then(r => r.ok ? r.json() : []).catch(() => []),
+                fetch('/api/inventory').then(r => r.ok ? r.json() : []).catch(() => []),
+                fetch('/api/extras-catalog').then(r => r.ok ? r.json() : []).catch(() => []),
             ]);
             setItems(Array.isArray(m) ? m : []);
             setCategories(Array.isArray(c) ? c : []);
             setInventory(Array.isArray(i) ? i : Array.isArray(i?.items) ? i.items : []);
+            setExtrasCatalog(Array.isArray(ex) ? ex : []);
             setLoading(false);
         } catch {
             setItems([]);
             setCategories([]);
             setInventory([]);
+            setExtrasCatalog([]);
             setLoading(false);
             toast('error', 'Failed to load menu data');
         }
@@ -242,7 +255,109 @@ export default function MenuPage() {
 
     const handleSaveItem = async (e: React.FormEvent) => {
         e.preventDefault();
-        await saveItem(false);
+
+        // Existing items: still require at least one ingredient linked.
+        if (itemForm.id) {
+            if (recipeIngredients.length === 0) {
+                toast('error', 'Link at least one ingredient before saving — inventory needs a recipe to track sales.');
+                return;
+            }
+            await saveItem(false);
+            return;
+        }
+
+        // New items: validate the ingredient drafts BEFORE creating anything,
+        // so we never leave an orphan menu item without a recipe.
+        const drafts = ingredientDrafts.filter(d => d.inventoryId.trim() || d.quantityUsed.trim());
+        if (drafts.length === 0) {
+            toast('error', 'Add at least one ingredient so inventory can track this dish.');
+            return;
+        }
+        const sanitized = drafts.map(d => ({
+            inventoryId: d.inventoryId.trim(),
+            quantityUsed: Number(d.quantityUsed),
+        }));
+        if (sanitized.some(d => !d.inventoryId)) {
+            toast('error', 'Pick an inventory item for every ingredient row.');
+            return;
+        }
+        if (sanitized.some(d => !Number.isFinite(d.quantityUsed) || d.quantityUsed <= 0)) {
+            toast('error', 'Enter a valid quantity for every ingredient.');
+            return;
+        }
+        if (new Set(sanitized.map(d => d.inventoryId)).size !== sanitized.length) {
+            toast('error', 'Each ingredient can only be added once.');
+            return;
+        }
+
+        // Validate optional extras drafts ahead of any API call.
+        const extraRaw = extraDrafts.filter(d => d.inventoryId.trim() || d.label.trim() || d.quantityUsed.trim());
+        const extrasSanitized = extraRaw.map(d => ({
+            inventoryId: d.inventoryId.trim(),
+            label: d.label.trim(),
+            quantityUsed: Number(d.quantityUsed),
+        }));
+        if (extrasSanitized.some(d => !d.inventoryId || !d.label)) {
+            toast('error', 'Pick an extra for every extras row (or clear it).');
+            return;
+        }
+        if (extrasSanitized.some(d => !Number.isFinite(d.quantityUsed) || d.quantityUsed <= 0)) {
+            toast('error', 'Enter a valid quantity for every extra.');
+            return;
+        }
+
+        // 1. Create the item.
+        const savedItem = await saveItem(false);
+        if (!savedItem) return;
+
+        // 2. Attach the recipe.
+        try {
+            const res = await fetch(`/api/menu/${savedItem.id}/ingredients`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ingredients: sanitized }),
+            });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data?.error || 'Failed to save recipe');
+            }
+        } catch (err) {
+            toast('error', err instanceof Error ? err.message : 'Recipe failed to save — try again.');
+            await loadRecipeIngredients(savedItem.id);
+            setShowRecipeEditor(true);
+            setIsItemModalOpen(true);
+            return;
+        }
+
+        // 3. Attach extras (optional — only if drafts were filled in).
+        if (extrasSanitized.length > 0) {
+            try {
+                const res = await fetch(`/api/menu/${savedItem.id}/extras`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ extras: extrasSanitized }),
+                });
+                if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    throw new Error(data?.error || 'Failed to save extras');
+                }
+            } catch (err) {
+                toast('error', err instanceof Error ? err.message : 'Extras failed to save — item & recipe were saved.');
+                await loadExtraOptions(savedItem.id);
+                setShowExtrasEditor(true);
+                setIsItemModalOpen(true);
+                return;
+            }
+        }
+
+        toast('success', `“${savedItem.name}” saved with ${sanitized.length} ingredient${sanitized.length === 1 ? '' : 's'}${extrasSanitized.length ? ` and ${extrasSanitized.length} extra${extrasSanitized.length === 1 ? '' : 's'}` : ''}.`);
+        resetIngredientDrafts();
+        resetExtraDrafts();
+        setRecipeIngredients([]);
+        setExtraOptions([]);
+        setShowRecipeEditor(false);
+        setShowExtrasEditor(false);
+        fetchData();
     };
 
     const handleDeleteItem = async (id: string) => {
@@ -258,21 +373,63 @@ export default function MenuPage() {
         }
     };
 
+    const handleSaveExtraCatalog = async (e: React.FormEvent) => {
+        e.preventDefault();
+        const name = extraCatalogForm.name.trim();
+        const inventoryId = extraCatalogForm.inventoryId;
+        const defaultQuantity = Number(extraCatalogForm.defaultQuantity);
+
+        if (!name) { toast('error', 'Give the extra a name'); return; }
+        if (!inventoryId) { toast('error', 'Pick the inventory item this extra uses'); return; }
+        if (!Number.isFinite(defaultQuantity) || defaultQuantity <= 0) {
+            toast('error', 'Enter a quantity greater than zero');
+            return;
+        }
+
+        try {
+            const res = await fetch('/api/extras-catalog', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, inventoryId, defaultQuantity }),
+            });
+            const body = await res.json().catch(() => null);
+            if (!res.ok) {
+                toast('error', body?.error || 'Could not create extra');
+                return;
+            }
+            toast('success', `“${name}” added to extras`);
+            setIsExtraCatalogModalOpen(false);
+            setExtraCatalogForm({ name: '', inventoryId: '', defaultQuantity: '' });
+            fetchData();
+        } catch {
+            toast('error', 'Could not create extra');
+        }
+    };
+
     const handleSaveCategory = async (e: React.FormEvent) => {
         e.preventDefault();
+        const name = categoryForm.name.trim();
+        if (!name) {
+            toast('error', 'Give the category a name');
+            return;
+        }
         try {
             const res = await fetch('/api/categories', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(categoryForm)
+                body: JSON.stringify({ ...categoryForm, name }),
             });
             if (res.ok) {
-                toast('success', 'Category created');
+                toast('success', `“${name}” added to your menu`);
                 setIsCategoryModalOpen(false);
+                setCategoryForm({ name: '', icon: '🍽️', sortOrder: 0 });
                 fetchData();
+                return;
             }
+            const body = await res.json().catch(() => null);
+            toast('error', body?.error || 'Could not create category');
         } catch {
-            toast('error', 'Failed to create category');
+            toast('error', 'Could not create category');
         }
     };
 
@@ -500,8 +657,8 @@ export default function MenuPage() {
         resetIngredientDrafts();
         setExtraOptions([]);
         resetExtraDrafts();
-        setShowRecipeEditor(false);
-        setShowExtrasEditor(false);
+        setShowRecipeEditor(true);
+        setShowExtrasEditor(true);
         setIsItemModalOpen(true);
     };
 
@@ -573,34 +730,93 @@ export default function MenuPage() {
 
     return (
         <AppLayout>
-            <div className="flex justify-between items-center mb-6">
+            {/* Editorial header */}
+            <div className="flex justify-between items-start mb-6 gap-4 flex-wrap">
                 <div>
-                    <h1 className="text-2xl font-bold flex items-center gap-2">
-                        <Utensils className="text-primary" /> Menu Management
-                    </h1>
-                    <p className="text-muted">Manage your dishes, drinks, and their recipe linkages.</p>
+                    <span style={{ display: 'inline-block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.22em', color: 'var(--text-accent)', marginBottom: 8 }}>
+                        Your menu
+                    </span>
+                    <h2 style={{ fontFamily: 'var(--font-display), serif', fontSize: 28, fontWeight: 700, letterSpacing: '-0.03em', color: 'var(--text-primary)', marginBottom: 4 }}>
+                        What you serve
+                    </h2>
+                    <p style={{ fontSize: 13, color: 'var(--text-muted)', maxWidth: 640 }}>
+                        Every dish and drink your team can sell. Add ingredients to each item so inventory updates automatically.
+                    </p>
                 </div>
                 {canManageMenu && (
-                    <div className="flex gap-2">
-                        <button className="btn btn-secondary" onClick={() => {
+                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                        <Button variant="secondary" onClick={() => {
                             setCategoryForm({ name: '', icon: '🍽️', sortOrder: categories.length });
                             setIsCategoryModalOpen(true);
                         }}>
-                            <Plus size={16} /> Add Category
-                        </button>
-                        <button className="btn btn-primary" onClick={() => {
-                            openNewItemModal();
+                            <Plus size={16} /> Add category
+                        </Button>
+                        <Button variant="secondary" onClick={() => {
+                            setExtraCatalogForm({ name: '', inventoryId: inventory[0]?.id || '', defaultQuantity: '' });
+                            setIsExtraCatalogModalOpen(true);
                         }}>
-                            <Plus size={16} /> Add Item
-                        </button>
+                            <Plus size={16} /> Add extra
+                        </Button>
+                        <Button variant="primary" onClick={openNewItemModal}>
+                            <Plus size={16} /> Add item
+                        </Button>
                     </div>
                 )}
             </div>
 
-            <div className="flex gap-4 mb-6">
+            {/* Summary stats */}
+            <div className="grid-3 gap-4 mb-6">
+                <div className="card" style={{ padding: 20 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.18em', color: 'var(--text-muted)' }}>Total items</span>
+                        <div style={{ width: 34, height: 34, borderRadius: 12, background: 'rgba(180,104,51,0.14)', border: '1px solid rgba(180,104,51,0.32)', color: 'var(--text-accent)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <Utensils size={18} />
+                        </div>
+                    </div>
+                    <div style={{ fontFamily: 'var(--font-display), serif', fontSize: 36, fontWeight: 700, lineHeight: 1, letterSpacing: '-0.04em', color: 'var(--text-primary)', marginBottom: 6 }}>
+                        {items.length}
+                    </div>
+                    <div style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
+                        Dishes and drinks on offer
+                    </div>
+                </div>
+
+                <div className="card" style={{ padding: 20 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.18em', color: 'var(--text-muted)' }}>Categories</span>
+                        <div style={{ width: 34, height: 34, borderRadius: 12, background: 'rgba(56,189,248,0.14)', border: '1px solid rgba(56,189,248,0.32)', color: '#38bdf8', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <Tag size={18} />
+                        </div>
+                    </div>
+                    <div style={{ fontFamily: 'var(--font-display), serif', fontSize: 36, fontWeight: 700, lineHeight: 1, letterSpacing: '-0.04em', color: 'var(--text-primary)', marginBottom: 6 }}>
+                        {categories.length}
+                    </div>
+                    <div style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
+                        {categories.slice(0, 3).map(c => c.name).join(' · ') || 'Add a category to start'}
+                    </div>
+                </div>
+
+                <div className="card" style={{ padding: 20 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.18em', color: 'var(--text-muted)' }}>Trending now</span>
+                        <div style={{ width: 34, height: 34, borderRadius: 12, background: 'rgba(245,158,11,0.14)', border: '1px solid rgba(245,158,11,0.32)', color: '#f59e0b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <Flame size={18} />
+                        </div>
+                    </div>
+                    <div style={{ fontFamily: 'var(--font-display), serif', fontSize: 36, fontWeight: 700, lineHeight: 1, letterSpacing: '-0.04em', color: 'var(--text-primary)', marginBottom: 6 }}>
+                        {items.filter(i => i.isPopular).length}
+                    </div>
+                    <div style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
+                        Items selling best this week
+                    </div>
+                </div>
+            </div>
+
+            {/* Search */}
+            <div className="flex gap-4 mb-4">
                 <div className="search-input flex-1">
                     <Search size={16} />
-                    <input type="text" placeholder="Search dishes, drinks, or category..." value={search} onChange={e => setSearch(e.target.value)} />
+                    <input type="text" placeholder="Search by name or category…" value={search} onChange={e => setSearch(e.target.value)} />
                 </div>
             </div>
 
@@ -609,19 +825,23 @@ export default function MenuPage() {
                     <table className="data-table">
                         <thead>
                             <tr>
-                                <th>Item Details</th>
+                                <th>Dish</th>
                                 <th>Category</th>
                                 <th>Price</th>
-                                <th>Status</th>
-                                <th style={{ textAlign: 'right' }}>Actions</th>
+                                <th>Tag</th>
+                                <th style={{ textAlign: 'right' }}>{canManageMenu ? '' : null}</th>
                             </tr>
                         </thead>
                         <tbody>
                             {filtered.map(item => (
                                 <tr key={item.id}>
                                     <td>
-                                        <div className="font-bold">{item.name}</div>
-                                        <div className="text-muted text-sm truncate" style={{ maxWidth: 300 }}>{item.description}</div>
+                                        <div className="font-bold" style={{ fontFamily: 'var(--font-display), serif', fontSize: 15, letterSpacing: '-0.01em' }}>
+                                            {item.name}
+                                        </div>
+                                        {item.description && (
+                                            <div className="text-muted text-sm truncate" style={{ maxWidth: 360 }}>{item.description}</div>
+                                        )}
                                     </td>
                                     <td>
                                         <span className="badge" style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-secondary)' }}>
@@ -631,27 +851,45 @@ export default function MenuPage() {
                                     <td className="font-bold text-success">{formatCurrency(item.price, settings.currencySymbol)}</td>
                                     <td>
                                         {item.isPopular
-                                            ? <span className="badge available">Popular</span>
-                                            : <span className="badge" style={{ background: 'rgba(255,255,255,0.05)' }}>Standard</span>}
+                                            ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 700, padding: '4px 10px', borderRadius: 999, background: 'rgba(245,158,11,0.15)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.32)', textTransform: 'uppercase', letterSpacing: '0.12em' }}>
+                                                <Flame size={10} /> Trending
+                                            </span>
+                                            : <span style={{ display: 'inline-block', fontSize: 10, fontWeight: 700, padding: '4px 10px', borderRadius: 999, background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)', border: '1px solid var(--border)', textTransform: 'uppercase', letterSpacing: '0.12em' }}>
+                                                Standard
+                                            </span>}
                                     </td>
                                     <td>
                                         {canManageMenu && (
                                             <div className="flex gap-2 justify-end">
-                                                <button
-                                                    className="btn btn-icon btn-secondary"
-                                                    title="Edit"
-                                                    onClick={() => openEditItemModal(item)}
-                                                >
-                                                    <Edit2 size={14} />
-                                                </button>
-                                                <button className="btn btn-icon btn-danger" title="Delete" onClick={() => handleDeleteItem(item.id)}>
-                                                    <Trash2 size={14} />
-                                                </button>
+                                                <IconHint label="Edit dish">
+                                                    <Button size="icon" variant="secondary" onClick={() => openEditItemModal(item)}>
+                                                        <Edit2 size={14} />
+                                                    </Button>
+                                                </IconHint>
+                                                <IconHint label="Remove from menu">
+                                                    <Button size="icon" variant="danger" onClick={() => handleDeleteItem(item.id)}>
+                                                        <Trash2 size={14} />
+                                                    </Button>
+                                                </IconHint>
                                             </div>
                                         )}
                                     </td>
                                 </tr>
                             ))}
+                            {filtered.length === 0 && (
+                                <tr>
+                                    <td colSpan={5} style={{ padding: '60px 20px', textAlign: 'center' }}>
+                                        <div style={{ fontSize: 14, color: 'var(--text-muted)', marginBottom: 4 }}>
+                                            {search ? `Nothing matches "${search}"` : items.length === 0 ? 'No menu items yet' : 'No matches'}
+                                        </div>
+                                        {canManageMenu && items.length === 0 && (
+                                            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                                                Tap &quot;Add item&quot; to put your first dish on the menu.
+                                            </div>
+                                        )}
+                                    </td>
+                                </tr>
+                            )}
                         </tbody>
                     </table>
                 </div>
@@ -691,47 +929,6 @@ export default function MenuPage() {
                                     </select>
                                 </div>
                             </div>
-                            <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-                                <div className="flex items-center justify-between gap-3">
-                                    <div>
-                                        <div className="font-bold flex items-center gap-2">
-                                            <ChefHat size={16} className="text-primary" /> Recipe
-                                        </div>
-                                        <div className="text-sm text-muted">
-                                            Link inventory ingredients so orders deduct stock automatically.
-                                        </div>
-                                    </div>
-                                    <button type="button" className="btn btn-secondary" onClick={handleOpenRecipeEditor}>
-                                        <ChefHat size={16} /> {showRecipeEditor ? 'Refresh Recipe' : 'Recipe'}
-                                    </button>
-                                </div>
-                                {!itemForm.id && (
-                                    <div className="text-xs text-muted mt-3">
-                                        Selecting `Recipe` will save this item first, then open the ingredient editor here.
-                                    </div>
-                                )}
-                            </div>
-
-                            <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-                                <div className="flex items-center justify-between gap-3">
-                                    <div>
-                                        <div className="font-bold flex items-center gap-2">
-                                            <Plus size={16} className="text-primary" /> Allowed Extras
-                                        </div>
-                                        <div className="text-sm text-muted">
-                                            These become structured add-ons the waiter can apply during customization.
-                                        </div>
-                                    </div>
-                                    <button type="button" className="btn btn-secondary" onClick={handleOpenExtrasEditor}>
-                                        <Plus size={16} /> {showExtrasEditor ? 'Refresh Extras' : 'Extras'}
-                                    </button>
-                                </div>
-                                {!itemForm.id && (
-                                    <div className="text-xs text-muted mt-3">
-                                        Selecting `Extras` will save this item first, then open the extra-options editor here.
-                                    </div>
-                                )}
-                            </div>
 
                             {showRecipeEditor && (
                                 <div className="bg-white/5 rounded-lg p-4 border border-white/10">
@@ -743,12 +940,7 @@ export default function MenuPage() {
                                     </div>
 
                                     <div className="bg-white/5 rounded-lg p-4 mb-6 border border-white/10">
-                                        <div className="flex items-center justify-between gap-3 mb-3">
-                                            <h3 className="text-sm font-bold flex items-center gap-2"><Plus size={14} /> Add Ingredients</h3>
-                                            <button type="button" className="btn btn-secondary" onClick={addIngredientDraftRow}>
-                                                <Plus size={16} /> Add Row
-                                            </button>
-                                        </div>
+                                        <h3 className="text-sm font-bold flex items-center gap-2 mb-3"><Plus size={14} /> Add Ingredients</h3>
                                         <div className="flex flex-col gap-3">
                                             {ingredientDrafts.map((draft, index) => (
                                                 <div key={draft.id} className="recipe-add-row">
@@ -783,6 +975,39 @@ export default function MenuPage() {
                                                 </div>
                                             ))}
                                         </div>
+                                        <button
+                                            type="button"
+                                            onClick={addIngredientDraftRow}
+                                            style={{
+                                                display: 'flex',
+                                                width: '100%',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                gap: 8,
+                                                marginTop: 12,
+                                                padding: '12px 16px',
+                                                borderRadius: 10,
+                                                fontSize: 13,
+                                                fontWeight: 600,
+                                                color: 'var(--text-muted)',
+                                                background: 'transparent',
+                                                border: '1px dashed rgba(255,255,255,0.18)',
+                                                cursor: 'pointer',
+                                                transition: 'all 0.15s ease',
+                                            }}
+                                            onMouseEnter={e => {
+                                                e.currentTarget.style.color = 'var(--brand-500)';
+                                                e.currentTarget.style.borderColor = 'rgba(249,115,22,0.55)';
+                                                e.currentTarget.style.background = 'rgba(249,115,22,0.05)';
+                                            }}
+                                            onMouseLeave={e => {
+                                                e.currentTarget.style.color = 'var(--text-muted)';
+                                                e.currentTarget.style.borderColor = 'rgba(255,255,255,0.18)';
+                                                e.currentTarget.style.background = 'transparent';
+                                            }}
+                                        >
+                                            <Plus size={15} /> Add ingredient
+                                        </button>
                                         <div className="flex justify-end mt-4">
                                             <button type="button" className="btn btn-primary" onClick={handleSaveIngredientDrafts}>
                                                 <Save size={16} /> Save Ingredients
@@ -826,63 +1051,95 @@ export default function MenuPage() {
                                     </div>
 
                                     <div className="bg-white/5 rounded-lg p-4 mb-6 border border-white/10">
-                                        <div className="flex items-center justify-between gap-3 mb-3">
-                                            <h3 className="text-sm font-bold flex items-center gap-2"><Plus size={14} /> Add Extra Options</h3>
-                                            <button type="button" className="btn btn-secondary" onClick={addExtraDraftRow}>
-                                                <Plus size={16} /> Add Row
-                                            </button>
-                                        </div>
-                                        <div className="flex flex-col gap-3">
-                                            {extraDrafts.map((draft, index) => (
-                                                <div key={draft.id} className="recipe-add-row extra-add-row">
-                                                    <select
-                                                        className="form-input"
-                                                        value={draft.inventoryId}
-                                                        onChange={e => {
-                                                            const inventoryItem = inventory.find((item) => item.id === e.target.value);
-                                                            updateExtraDraft(draft.id, {
-                                                                inventoryId: e.target.value,
-                                                                label: draft.label || inventoryItem?.name || '',
-                                                            });
-                                                        }}
-                                                    >
-                                                        <option value="">Select inventory item...</option>
-                                                        {inventory.map(i => (
-                                                            <option key={i.id} value={i.id}>{i.name} ({i.unit})</option>
-                                                        ))}
-                                                    </select>
-                                                    <input
-                                                        className="form-input"
-                                                        placeholder="Label for waiter"
-                                                        value={draft.label}
-                                                        onChange={e => updateExtraDraft(draft.id, { label: e.target.value })}
-                                                    />
-                                                    <div className="recipe-quantity-field">
-                                                        <input
-                                                            type="number"
-                                                            step="0.001"
-                                                            className="form-input"
-                                                            placeholder="Qty"
-                                                            value={draft.quantityUsed}
-                                                            onChange={e => updateExtraDraft(draft.id, { quantityUsed: e.target.value })}
-                                                        />
-                                                    </div>
-                                                    <button
-                                                        type="button"
-                                                        className="btn btn-icon btn-ghost"
-                                                        onClick={() => removeExtraDraftRow(draft.id)}
-                                                        title={extraDrafts.length === 1 ? 'Clear row' : `Remove extra row ${index + 1}`}
-                                                    >
-                                                        <Trash2 size={16} />
+                                        <h3 className="text-sm font-bold flex items-center gap-2 mb-3"><Plus size={14} /> Pick extras for this dish</h3>
+                                        {extrasCatalog.length === 0 ? (
+                                            <div className="text-center p-6 border border-dashed border-white/10 rounded-lg text-muted text-sm">
+                                                <Info className="mx-auto mb-2 opacity-30" size={28} />
+                                                No extras created yet. Use <b>Add extra</b> at the top of the page to create reusable add-ons (extra cheese, extra shot, side fries…).
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <div className="flex flex-col gap-3">
+                                                    {extraDrafts.map((draft, index) => {
+                                                        const linkedCatalog = extrasCatalog.find(c => c.inventoryId === draft.inventoryId && c.name === draft.label);
+                                                        return (
+                                                            <div key={draft.id} className="recipe-add-row extra-add-row">
+                                                                <select
+                                                                    className="form-input"
+                                                                    value={linkedCatalog?.id || ''}
+                                                                    onChange={e => {
+                                                                        const picked = extrasCatalog.find(c => c.id === e.target.value);
+                                                                        if (picked) {
+                                                                            updateExtraDraft(draft.id, {
+                                                                                inventoryId: picked.inventoryId,
+                                                                                label: picked.name,
+                                                                                quantityUsed: String(picked.defaultQuantity),
+                                                                            });
+                                                                        } else {
+                                                                            updateExtraDraft(draft.id, { inventoryId: '', label: '', quantityUsed: '' });
+                                                                        }
+                                                                    }}
+                                                                >
+                                                                    <option value="">Select an extra…</option>
+                                                                    {extrasCatalog.map(c => (
+                                                                        <option key={c.id} value={c.id}>
+                                                                            {c.name} — {c.inventory.name} ({c.defaultQuantity} {c.inventory.unit})
+                                                                        </option>
+                                                                    ))}
+                                                                </select>
+                                                                <div className="recipe-quantity-field">
+                                                                    <input
+                                                                        type="number"
+                                                                        step="0.001"
+                                                                        className="form-input"
+                                                                        placeholder="Qty"
+                                                                        value={draft.quantityUsed}
+                                                                        onChange={e => updateExtraDraft(draft.id, { quantityUsed: e.target.value })}
+                                                                        title="Override the default quantity for this dish (optional)"
+                                                                    />
+                                                                </div>
+                                                                <button
+                                                                    type="button"
+                                                                    className="btn btn-icon btn-ghost"
+                                                                    onClick={() => removeExtraDraftRow(draft.id)}
+                                                                    title={extraDrafts.length === 1 ? 'Clear row' : `Remove extra row ${index + 1}`}
+                                                                >
+                                                                    <Trash2 size={16} />
+                                                                </button>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={addExtraDraftRow}
+                                                    style={{
+                                                        display: 'flex', width: '100%', alignItems: 'center', justifyContent: 'center',
+                                                        gap: 8, marginTop: 12, padding: '12px 16px', borderRadius: 10,
+                                                        fontSize: 13, fontWeight: 600, color: 'var(--text-muted)',
+                                                        background: 'transparent', border: '1px dashed rgba(255,255,255,0.18)', cursor: 'pointer',
+                                                        transition: 'all 0.15s ease',
+                                                    }}
+                                                    onMouseEnter={e => {
+                                                        e.currentTarget.style.color = 'var(--brand-500)';
+                                                        e.currentTarget.style.borderColor = 'rgba(249,115,22,0.55)';
+                                                        e.currentTarget.style.background = 'rgba(249,115,22,0.05)';
+                                                    }}
+                                                    onMouseLeave={e => {
+                                                        e.currentTarget.style.color = 'var(--text-muted)';
+                                                        e.currentTarget.style.borderColor = 'rgba(255,255,255,0.18)';
+                                                        e.currentTarget.style.background = 'transparent';
+                                                    }}
+                                                >
+                                                    <Plus size={15} /> Add another extra
+                                                </button>
+                                                <div className="flex justify-end mt-4">
+                                                    <button type="button" className="btn btn-primary" onClick={handleSaveExtraDrafts}>
+                                                        <Save size={16} /> Save Extras
                                                     </button>
                                                 </div>
-                                            ))}
-                                        </div>
-                                        <div className="flex justify-end mt-4">
-                                            <button type="button" className="btn btn-primary" onClick={handleSaveExtraDrafts}>
-                                                <Save size={16} /> Save Extras
-                                            </button>
-                                        </div>
+                                            </>
+                                        )}
                                     </div>
 
                                     <div className="recipe-list">
@@ -912,41 +1169,173 @@ export default function MenuPage() {
                             )}
                             <div className="flex gap-2 mt-4">
                                 <button type="button" className="btn btn-secondary flex-1" onClick={() => setIsItemModalOpen(false)}>Cancel</button>
-                                <button type="submit" className="btn btn-primary flex-1"><Save size={16} /> Save Item</button>
+                                <button type="submit" className="btn btn-primary flex-1">
+                                    <Save size={16} /> {itemForm.id ? 'Save item' : 'Save item & recipe'}
+                                </button>
                             </div>
                         </form>
                     </div>
                 </div>
             )}
 
-            {/* Category Modal */}
-            {isCategoryModalOpen && (
-                <div className="modal-overlay">
-                    <div className="modal-content" style={{ maxWidth: 400 }}>
-                        <div className="flex justify-between items-center mb-6">
-                            <h2 className="text-xl font-bold">Add New Category</h2>
-                            <button className="btn btn-icon btn-ghost" onClick={() => setIsCategoryModalOpen(false)}><X size={20} /></button>
+            {/* Category Dialog */}
+            <Dialog open={isCategoryModalOpen} onOpenChange={setIsCategoryModalOpen}>
+                <DialogContent style={{ maxWidth: 560 }}>
+                    {/* Hero with live preview chip */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 18, marginBottom: 8 }}>
+                        <div
+                            style={{
+                                width: 56,
+                                height: 56,
+                                borderRadius: 18,
+                                background: 'var(--gradient-brand)',
+                                color: '#fffaf4',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: 28,
+                                boxShadow: 'var(--shadow-brand)',
+                                flexShrink: 0,
+                            }}
+                        >
+                            {categoryForm.icon || '🍽️'}
                         </div>
-                        <form onSubmit={handleSaveCategory} className="flex flex-col gap-4">
-                            <div>
-                                <label className="block text-sm text-muted mb-1">Category Name</label>
-                                <input required className="form-input" value={categoryForm.name} onChange={e => setCategoryForm({ ...categoryForm, name: e.target.value })} placeholder="e.g. Main Course" />
-                            </div>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-sm text-muted mb-1">Icon (Emoji)</label>
-                                    <input className="form-input text-center" value={categoryForm.icon} onChange={e => setCategoryForm({ ...categoryForm, icon: e.target.value })} maxLength={2} />
-                                </div>
-                                <div>
-                                    <label className="block text-sm text-muted mb-1">Display Order</label>
-                                    <input type="number" className="form-input" value={categoryForm.sortOrder} onChange={e => setCategoryForm({ ...categoryForm, sortOrder: parseInt(e.target.value) })} />
-                                </div>
-                            </div>
-                            <button type="submit" className="btn btn-primary w-full mt-4"><Plus size={16} /> Create Category</button>
-                        </form>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                            <DialogTitle asChild>
+                                <h2
+                                    style={{
+                                        fontFamily: 'var(--font-display), serif',
+                                        fontSize: 26,
+                                        fontWeight: 700,
+                                        letterSpacing: '-0.03em',
+                                        lineHeight: 1.1,
+                                        color: 'var(--text-primary)',
+                                        marginBottom: 6,
+                                    }}
+                                >
+                                    {categoryForm.name.trim() || 'Add a category'}
+                                </h2>
+                            </DialogTitle>
+                            <DialogDescription style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                                Group dishes on the menu. Pick a name and an emoji that fits.
+                            </DialogDescription>
+                        </div>
                     </div>
-                </div>
-            )}
+
+                    <form onSubmit={handleSaveCategory} style={{ display: 'flex', flexDirection: 'column', gap: 20, marginTop: 8 }}>
+                        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                            <FormField label="Emoji" htmlFor="cat-icon" className="shrink-0">
+                                <Input
+                                    id="cat-icon"
+                                    value={categoryForm.icon}
+                                    onChange={e => {
+                                        const raw = e.target.value;
+                                        const glyphs = Array.from(new Intl.Segmenter().segment(raw), s => s.segment);
+                                        setCategoryForm({ ...categoryForm, icon: glyphs.slice(-1).join('') || raw });
+                                    }}
+                                    style={{ fontSize: 22, textAlign: 'center', width: 64, paddingLeft: 8, paddingRight: 8, lineHeight: 1.2 }}
+                                />
+                            </FormField>
+                            <FormField label="Name" htmlFor="cat-name" className="flex-1">
+                                <Input
+                                    id="cat-name"
+                                    required
+                                    value={categoryForm.name}
+                                    onChange={e => setCategoryForm({ ...categoryForm, name: e.target.value })}
+                                    placeholder="Mains, Burgers, Drinks…"
+                                    autoFocus
+                                />
+                            </FormField>
+                        </div>
+                        <p style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5, margin: 0 }}>
+                            Tip — open your emoji picker with <b style={{ color: 'var(--text-secondary)' }}>⌘ Ctrl Space</b> (Mac) or <b style={{ color: 'var(--text-secondary)' }}>Win + .</b> (Windows).
+                        </p>
+
+                        <DialogFooter style={{ paddingTop: 8, gap: 8 }}>
+                            <Button type="button" variant="ghost" onClick={() => setIsCategoryModalOpen(false)}>
+                                Cancel
+                            </Button>
+                            <Button type="submit" variant="primary" disabled={!categoryForm.name.trim()}>
+                                <Plus size={16} /> Create category
+                            </Button>
+                        </DialogFooter>
+                    </form>
+                </DialogContent>
+            </Dialog>
+
+            {/* Extra Catalog Dialog */}
+            <Dialog open={isExtraCatalogModalOpen} onOpenChange={setIsExtraCatalogModalOpen}>
+                <DialogContent style={{ maxWidth: 560 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 18, marginBottom: 8 }}>
+                        <div style={{ width: 56, height: 56, borderRadius: 18, background: 'var(--gradient-brand)', color: '#fffaf4', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, boxShadow: 'var(--shadow-brand)', flexShrink: 0 }}>
+                            +
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                            <DialogTitle asChild>
+                                <h2 style={{ fontFamily: 'var(--font-display), serif', fontSize: 26, fontWeight: 700, letterSpacing: '-0.03em', lineHeight: 1.1, color: 'var(--text-primary)', marginBottom: 6 }}>
+                                    {extraCatalogForm.name.trim() || 'Add an extra'}
+                                </h2>
+                            </DialogTitle>
+                            <DialogDescription style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                                A reusable add-on (extra cheese, extra shot, side of fries…) that any dish can offer. Waiters pick from this list at order time.
+                            </DialogDescription>
+                        </div>
+                    </div>
+
+                    <form onSubmit={handleSaveExtraCatalog} style={{ display: 'flex', flexDirection: 'column', gap: 20, marginTop: 8 }}>
+                        <FormField label="What waiters see" htmlFor="extra-name">
+                            <Input
+                                id="extra-name"
+                                required
+                                value={extraCatalogForm.name}
+                                onChange={e => setExtraCatalogForm({ ...extraCatalogForm, name: e.target.value })}
+                                placeholder="Extra cheese, Extra shot, Side fries…"
+                                autoFocus
+                            />
+                        </FormField>
+
+                        <FormField label="Inventory item it uses" htmlFor="extra-inv" description="Stock deducts from this item when the extra is applied.">
+                            <select
+                                id="extra-inv"
+                                className="form-input"
+                                value={extraCatalogForm.inventoryId}
+                                onChange={e => setExtraCatalogForm({ ...extraCatalogForm, inventoryId: e.target.value })}
+                                required
+                            >
+                                <option value="">Select inventory item…</option>
+                                {inventory.map(inv => (
+                                    <option key={inv.id} value={inv.id}>{inv.name} ({inv.unit})</option>
+                                ))}
+                            </select>
+                        </FormField>
+
+                        <FormField label="Quantity used per extra" htmlFor="extra-qty" description="How much stock one application of this extra consumes.">
+                            <Input
+                                id="extra-qty"
+                                type="number"
+                                step="0.001"
+                                required
+                                value={extraCatalogForm.defaultQuantity}
+                                onChange={e => setExtraCatalogForm({ ...extraCatalogForm, defaultQuantity: e.target.value })}
+                                placeholder="e.g. 0.05"
+                            />
+                        </FormField>
+
+                        <DialogFooter style={{ paddingTop: 8, gap: 8 }}>
+                            <Button type="button" variant="ghost" onClick={() => setIsExtraCatalogModalOpen(false)}>
+                                Cancel
+                            </Button>
+                            <Button
+                                type="submit"
+                                variant="primary"
+                                disabled={!extraCatalogForm.name.trim() || !extraCatalogForm.inventoryId || !extraCatalogForm.defaultQuantity}
+                            >
+                                <Plus size={16} /> Create extra
+                            </Button>
+                        </DialogFooter>
+                    </form>
+                </DialogContent>
+            </Dialog>
 
             <style jsx>{`
                 .modal-overlay {

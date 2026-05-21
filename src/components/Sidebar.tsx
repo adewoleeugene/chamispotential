@@ -3,21 +3,25 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useSettings } from '@/contexts/SettingsContext';
+import { isWaiterRole } from '@/lib/roleRoutes';
 import {
     LayoutDashboard, UtensilsCrossed, ShoppingCart, Table2, CalendarDays,
-    Package, Users, BarChart3, LogOut, ChefHat, X
+    Package, Users, BarChart3, LogOut, ChefHat, X, Settings, Bell
 } from 'lucide-react';
 
 const navItems = [
-    { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', section: 'main', roles: ['admin', 'manager', 'waiter'] },
+    { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', section: 'main', roles: ['admin', 'manager', 'waiter', 'cashier'] },
     { href: '/orders', icon: ShoppingCart, label: 'Orders', section: 'main', roles: ['manager'] },
-    { href: '/tables', icon: Table2, label: 'Tables', section: 'main', roles: ['admin', 'manager', 'waiter'] },
+    { href: '/tables', icon: Table2, label: 'Tables', section: 'main', roles: ['admin', 'manager', 'waiter', 'cashier'] },
     { href: '/menu', icon: UtensilsCrossed, label: 'Menu', section: 'main', roles: ['admin', 'manager'] },
     { href: '/reservations', icon: CalendarDays, label: 'Reservations', section: 'main', roles: ['admin', 'manager'] },
     { href: '/kitchen', icon: ChefHat, label: 'Kitchen', section: 'main', roles: ['admin', 'manager', 'kitchen'] },
     { href: '/inventory', icon: Package, label: 'Inventory', section: 'operations', roles: ['admin', 'manager'] },
     { href: '/staff', icon: Users, label: 'Staff', section: 'operations', roles: ['admin', 'manager'] },
     { href: '/reports', icon: BarChart3, label: 'Reports', section: 'operations', roles: ['admin', 'manager'] },
+    { href: '/settings', icon: Settings, label: 'Settings', section: 'operations', roles: ['admin'] },
+    { href: '/notifications', icon: Bell, label: 'Notifications', section: 'operations', roles: ['admin', 'manager'] },
 ];
 
 export default function Sidebar({
@@ -58,8 +62,12 @@ export default function Sidebar({
     const sectionLabels: Record<string, string> = { main: 'Operations', operations: 'Management' };
     const activeOrderRef = useRef<HTMLDivElement | null>(null);
 
+    const { settings } = useSettings();
     const getInitials = (name: string) => name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
     const roleLabel = user?.role ? user.role.charAt(0).toUpperCase() + user.role.slice(1) : 'Guest';
+    const brandName = settings.restaurantName?.trim() || 'Flavor OS';
+    const brandInitials = brandName.split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase() || 'FO';
+    void brandInitials;
 
     useEffect(() => {
         if (!highlightActiveOrders || !isOpen) return;
@@ -72,10 +80,19 @@ export default function Sidebar({
             <aside className={`sidebar ${isOpen ? 'open' : ''}`}>
                 <div className="sidebar-logo">
                     <div className="logo-mark">
-                        <div className="logo-icon">FO</div>
+                        <div className="logo-icon" style={settings.logoDataUrl ? { padding: 0, overflow: 'hidden' } : undefined}>
+                            {settings.logoDataUrl ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                    src={settings.logoDataUrl}
+                                    alt={brandName}
+                                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                />
+                            ) : brandInitials}
+                        </div>
                         <div className="logo-text">
-                            <div className="logo-name">Flavor OS</div>
-                            <div className="logo-tagline">Editorial service suite</div>
+                            <div className="logo-name">{brandName}</div>
+                            <div className="logo-tagline">Restaurant operations</div>
                         </div>
                     </div>
                     <button className="sidebar-close" onClick={onClose} aria-label="Close navigation">
@@ -83,19 +100,7 @@ export default function Sidebar({
                     </button>
                 </div>
 
-                {user?.role !== 'waiter' && (
-                    <div className="sidebar-shift-card">
-                        <span className="sidebar-shift-label">Live service</span>
-                        <strong className="sidebar-shift-value">Dinner cadence</strong>
-                        <p className="sidebar-shift-copy">Keep reservations, tables, tickets, and checkout moving in one rhythm.</p>
-                        <div className="sidebar-shift-meta">
-                            <span>{roleLabel}</span>
-                            <span>Always on</span>
-                        </div>
-                    </div>
-                )}
-
-                {user?.role === 'waiter' && readyOrders.length > 0 && (
+                {isWaiterRole(user?.role) && readyOrders.length > 0 && (
                     <div
                         ref={activeOrderRef}
                         className={`sidebar-pickup-card${highlightActiveOrders ? ' sidebar-pickup-card--highlight' : ''}`}

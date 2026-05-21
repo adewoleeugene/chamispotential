@@ -7,6 +7,7 @@ import { getRecognizedRevenueWhere } from '@/lib/revenue';
 import { buildFinancialAnalytics } from '@/lib/restaurant-analytics';
 import type { CostMethod } from '@/lib/profitability';
 import { getTableDisplayStatus } from '@/lib/table-status';
+import { isWaiterRole } from '@/lib/roleRoutes';
 
 export async function GET(req: NextRequest) {
     const user = await getRequestUser(req);
@@ -14,7 +15,7 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const isWaiter = user.role === 'waiter';
+    const isWaiter = isWaiterRole(user.role);
     const waiterWhere = isWaiter ? { userId: user.id } : {};
 
     const now = new Date();
@@ -39,6 +40,7 @@ export async function GET(req: NextRequest) {
         pendingOrders,
         activeOrders,
         readyOrders,
+        servedToday,
         todayRevenue,
         monthRevenue,
         totalCustomers,
@@ -61,6 +63,7 @@ export async function GET(req: NextRequest) {
         prisma.order.count({ where: { status: 'pending' } }),
         prisma.order.count({ where: { ...waiterWhere, status: { in: isWaiter ? ['pending', 'preparing'] : ['pending', 'preparing', 'ready'] } } }),
         prisma.order.count({ where: { ...waiterWhere, status: 'ready' } }),
+        prisma.order.count({ where: { createdAt: { gte: todayStart, lte: todayEnd }, status: { in: ['served', 'completed'] } } }),
         prisma.order.aggregate({ where: getRecognizedRevenueWhere({ createdAt: { gte: todayStart, lte: todayEnd } }), _sum: { total: true } }),
         prisma.order.aggregate({ where: getRecognizedRevenueWhere({ createdAt: { gte: monthStart, lte: monthEnd } }), _sum: { total: true } }),
         prisma.order.count({ where: { createdAt: { gte: monthStart, lte: monthEnd } } }),
@@ -103,16 +106,11 @@ export async function GET(req: NextRequest) {
         }),
         // Active tables explicitly mapped with their current active order for the waiter
         prisma.table.findMany({
-            where: {
-                orders: {
-                    some: { ...waiterWhere, status: { in: ['pending', 'preparing', 'ready', 'served'] } }
-                }
-            },
+            orderBy: { number: 'asc' },
             include: {
                 orders: {
-                    where: { ...waiterWhere, status: { in: ['pending', 'preparing', 'ready', 'served'] } },
-                    include: { items: { include: { menuItem: true } } },
-                    orderBy: { createdAt: 'desc' },
+                    where: { status: { in: ['draft', 'payment_pending_confirmation', 'pending', 'preparing', 'ready', 'served'] } },
+                    select: { id: true, status: true },
                 }
             }
         }),
@@ -233,7 +231,10 @@ export async function GET(req: NextRequest) {
             : null,
     ].filter(Boolean);
 
-    const activeTableIds = new Set(activeTablesQuery.map((table) => table.id));
+    // Tables that actually have active orders (subset of all tables)
+    const activeTableIds = new Set(
+        activeTablesQuery.filter(t => t.orders.length > 0).map(t => t.id)
+    );
     const tableStatusMap = tableStats.reduce<Record<string, number>>((acc, t) => {
         const displayStatus = getTableDisplayStatus({
             status: t.status,
@@ -242,6 +243,11 @@ export async function GET(req: NextRequest) {
         acc[displayStatus] = (acc[displayStatus] || 0) + 1;
         return acc;
     }, {});
+
+    const activeTablesListWithStatus = activeTablesQuery.map(t => ({
+        ...t,
+        displayStatus: getTableDisplayStatus({ status: t.status, activeOrderCount: t.orders.length }),
+    }));
 
     return NextResponse.json({
         orders: {
@@ -252,6 +258,7 @@ export async function GET(req: NextRequest) {
             pending: pendingOrders,
             active: activeOrders,
             ready: readyOrders,
+            servedToday,
         },
         revenue: {
             today: todayRevenue._sum.total || 0,
@@ -278,8 +285,8 @@ export async function GET(req: NextRequest) {
         },
         customers: totalCustomers,
         tables: tableStatusMap,
-        activeTablesCount: activeTablesQuery.length,
-        activeTablesList: activeTablesQuery,
+        activeTablesCount: activeTableIds.size,
+        activeTablesList: activeTablesListWithStatus,
         topItems: topItemsWithNames,
         mostOrderedItem,
         leastOrderedItem,

@@ -6,6 +6,7 @@ import { SettingsProvider } from "@/contexts/SettingsContext";
 import { ToastProvider } from "@/contexts/ToastContext";
 import { PwaRegistration } from "@/components/PwaRegistration";
 import { InstallPrompt } from "@/components/InstallPrompt";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 const fraunces = Fraunces({
   subsets: ["latin"],
@@ -51,9 +52,11 @@ export default function RootLayout({
         <AuthProvider>
           <SettingsProvider>
             <ToastProvider>
-              <PwaRegistration />
-              <InstallPrompt />
-              {children}
+              <TooltipProvider delayDuration={250}>
+                <PwaRegistration />
+                <InstallPrompt />
+                {children}
+              </TooltipProvider>
             </ToastProvider>
           </SettingsProvider>
         </AuthProvider>

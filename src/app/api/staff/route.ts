@@ -20,15 +20,24 @@ export async function POST(req: NextRequest) {
     if (!user || user.role !== 'admin') {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
-    const { name, email, password, role, phone } = await req.json();
+    const body = await req.json();
+    const { name, password, role, phone } = body;
+    const identifier = (body.username ?? body.email)?.toLowerCase().trim();
+
+    if (!identifier) return NextResponse.json({ error: 'Username is required' }, { status: 400 });
+    if (!/^[a-z0-9._@-]+$/i.test(identifier)) {
+        return NextResponse.json({ error: 'Username can only contain letters, numbers, dots, dashes, underscores, or @' }, { status: 400 });
+    }
+
     const passwordError = validatePassword(password);
     if (passwordError) return NextResponse.json({ error: passwordError }, { status: 400 });
-    const existing = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
-    if (existing) return NextResponse.json({ error: 'Email already in use' }, { status: 400 });
+
+    const existing = await prisma.user.findUnique({ where: { email: identifier } });
+    if (existing) return NextResponse.json({ error: 'That username is already taken' }, { status: 400 });
 
     const hashed = await hashPassword(password);
     const newUser = await prisma.user.create({
-        data: { name, email: email.toLowerCase(), phone, password: hashed, role },
+        data: { name, email: identifier, phone, password: hashed, role, mustChangePassword: true },
         select: { id: true, name: true, phone: true, email: true, role: true, isActive: true, createdAt: true },
     });
     return NextResponse.json(newUser, { status: 201 });

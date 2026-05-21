@@ -493,27 +493,27 @@ export default function ReportsPage() {
                             <div>
                                 <div className="reports-kicker-pill">
                                     <BarChart3 size={16} />
-                                    Executive Reports
+                                    Reports
                                 </div>
                                 <h2 className="reports-hero-title">
-                                    Finance, purchasing, and service performance in one deliberate control room.
+                                    How is the restaurant actually doing?
                                 </h2>
                                 <p className="reports-hero-description">
-                                    Track net sales, purchase spend, gross profit, service timing, and stock pressure without bouncing between separate manager tools.
+                                    Sales, ingredient spend, profit, service timing and stock pressure — all in one place. Pick a period below to dig in.
                                 </p>
                             </div>
                             <div className="reports-meta-grid">
                                 <div className="reports-meta-card">
-                                    <div className="reports-meta-label">Active Range</div>
+                                    <div className="reports-meta-label">Showing</div>
                                     <div className="reports-meta-value">{data?.label || 'This Week'}</div>
                                 </div>
                                 <div className="reports-meta-card">
-                                    <div className="reports-meta-label">Finance Lens</div>
+                                    <div className="reports-meta-label">Cost method</div>
                                     <div className="reports-meta-value">{isAdmin ? activeCostingGuide.label : 'Weighted Avg'}</div>
                                 </div>
                                 <div className="reports-meta-card">
-                                    <div className="reports-meta-label">Audience</div>
-                                    <div className="reports-meta-value">{isAdmin ? 'Admin Finance View' : 'Manager Operating View'}</div>
+                                    <div className="reports-meta-label">Your view</div>
+                                    <div className="reports-meta-value">{isAdmin ? 'Owner / Finance' : 'Manager'}</div>
                                 </div>
                             </div>
                         </div>
@@ -521,18 +521,15 @@ export default function ReportsPage() {
                         <div className="reports-control-panel">
                             <div className="reports-control-head">
                                 <div>
-                                    <div className="reports-control-title">Report Controls</div>
-                                    <div className="reports-control-copy">Tune the date lens, costing lens, and export actions from one command deck.</div>
+                                    <div className="reports-control-title">Controls</div>
+                                    <div className="reports-control-copy">Change the period or export the numbers below.</div>
                                 </div>
                                 <div className="reports-control-badges">
                                     {isSyncing && (
                                         <div className="reports-status-pill reports-status-pill--sync">
-                                            Syncing report...
+                                            Updating…
                                         </div>
                                     )}
-                                    <div className="reports-status-pill">
-                                        {isAdmin ? 'Finance Controls Live' : 'Weighted Avg Locked'}
-                                    </div>
                                 </div>
                             </div>
 
@@ -783,21 +780,77 @@ export default function ReportsPage() {
                 </div>
             )}
 
-            {!isAdmin && (
-                <div className="card mb-4 reports-manager-note">
-                    <div className="reports-manager-note-head">
+            {!isAdmin && previousComparison && (
+                <div
+                    style={{
+                        marginBottom: 18,
+                        borderRadius: 24,
+                        border: '1px solid rgba(148,163,184,0.14)',
+                        background: 'linear-gradient(180deg, rgba(10,16,28,0.96), rgba(15,23,42,0.82))',
+                        overflow: 'hidden',
+                    }}
+                >
+                    <div style={{ padding: '18px 20px', borderBottom: '1px solid rgba(148,163,184,0.12)', display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
                         <div>
-                            <div className="text-muted text-sm font-bold uppercase">Admin Finance Tools</div>
-                            <div style={{ fontSize: 22, fontWeight: 800, color: '#f8fafc', marginTop: 8 }}>
-                                This view stays focused on daily operating signals
+                            <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: 1.3, textTransform: 'uppercase', color: '#7dd3fc', marginBottom: 6 }}>
+                                Period Comparison
                             </div>
-                            <p className="text-sm text-muted" style={{ marginTop: 10, maxWidth: 720 }}>
-                                Sales, purchase spend, service timing, and item performance stay visible here. Costing controls, exports, previous-period comparisons, and audit tables remain reserved for admins.
-                            </p>
+                            <div style={{ color: '#f8fafc', fontWeight: 800, fontSize: 20 }}>
+                                {previousComparison.currentLabel} vs {previousComparison.previousLabel}
+                            </div>
                         </div>
-                        <div className="reports-manager-note-pill">
-                            Manager lens
-                        </div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 0 }}>
+                        {[
+                            {
+                                title: 'Net Sales',
+                                value: formatCurrency(previousComparison.metrics.netSales.current, settings.currencySymbol),
+                                delta: previousComparison.metrics.netSales.deltaPct ?? null,
+                                detail: 'Revenue pace',
+                            },
+                            {
+                                title: 'Orders',
+                                value: String(previousComparison.metrics.totalOrders.current),
+                                delta: previousComparison.metrics.totalOrders.deltaPct ?? null,
+                                detail: 'Order count',
+                            },
+                            {
+                                title: 'Gross Profit',
+                                value: formatCurrency(previousComparison.metrics.grossProfit.current, settings.currencySymbol),
+                                delta: previousComparison.metrics.grossProfit.deltaPct ?? null,
+                                detail: 'Margin outcome',
+                            },
+                        ].map((card, index) => {
+                            const tone = getDeltaTone(card.delta);
+                            return (
+                                <div
+                                    key={card.title}
+                                    style={{
+                                        padding: 20,
+                                        borderLeft: index === 0 ? 'none' : '1px solid rgba(148,163,184,0.1)',
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        gap: 14,
+                                    }}
+                                >
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                                        <div>
+                                            <div style={{ color: '#f8fafc', fontWeight: 800, fontSize: 16 }}>{card.title}</div>
+                                            <div style={{ color: '#94a3b8', fontSize: 12, marginTop: 4 }}>{card.detail}</div>
+                                        </div>
+                                        <span style={{ padding: '7px 10px', borderRadius: 999, fontSize: 11, fontWeight: 800, letterSpacing: 0.3, ...tone }}>
+                                            {formatDelta(card.delta)}
+                                        </span>
+                                    </div>
+                                    <div style={{ fontSize: 34, fontWeight: 900, color: '#f8fafc', letterSpacing: -1.1, lineHeight: 0.98 }}>
+                                        {card.value}
+                                    </div>
+                                    <div style={{ fontSize: 13, color: '#9fb0c1', lineHeight: 1.6 }}>
+                                        vs {previousComparison.previousLabel}
+                                    </div>
+                                </div>
+                            );
+                        })}
                     </div>
                 </div>
             )}
@@ -1183,25 +1236,27 @@ export default function ReportsPage() {
                 </div>
             </div>
 
-            <div className="grid-3 gap-4 mb-4">
-                <div className="card">
-                    <div className="card-header">
-                        <h3 className="card-title flex items-center gap-2"><CalendarDays size={16} /> Revenue Mix</h3>
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                        {(data?.orderTypeMix || []).map((entry) => (
-                            <div key={entry.type} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <div>
-                                    <div className="font-bold" style={{ textTransform: 'capitalize' }}>{entry.type}</div>
-                                    <div className="text-xs text-muted">{entry.count} orders</div>
-                                </div>
-                                <div className="font-bold">{formatCurrency(entry.revenue || 0, settings.currencySymbol)}</div>
+            <div className="card mb-4">
+                <div className="card-header">
+                    <h3 className="card-title flex items-center gap-2"><CalendarDays size={16} /> Revenue Mix</h3>
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                    {(data?.orderTypeMix || []).map((entry) => (
+                        <div key={entry.type} style={{ flex: '1 1 160px', border: '1px solid var(--border)', borderRadius: 14, padding: '14px 18px', background: 'rgba(255,255,255,0.02)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16 }}>
+                            <div>
+                                <div className="font-bold" style={{ textTransform: 'capitalize' }}>{entry.type}</div>
+                                <div className="text-xs text-muted">{entry.count} orders</div>
                             </div>
-                        ))}
-                    </div>
+                            <div className="font-bold">{formatCurrency(entry.revenue || 0, settings.currencySymbol)}</div>
+                        </div>
+                    ))}
+                    {(!data?.orderTypeMix || data.orderTypeMix.length === 0) && (
+                        <div className="empty-state">No order type data for this range</div>
+                    )}
                 </div>
             </div>
 
+            {isAdmin && (
             <div className="grid-2 gap-4 mb-4">
                 <div className="card">
                     <div className="card-header">
@@ -1273,6 +1328,7 @@ export default function ReportsPage() {
                     </div>
                 </div>
             </div>
+            )}
 
             {isAdmin && (
             <div className="card">

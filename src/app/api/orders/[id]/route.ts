@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getRequestUser } from '@/lib/auth';
+import { isWaiterRole } from '@/lib/roleRoutes';
 import {
     reconcileInventoryForOrderEdit,
     restoreInventoryForOrder,
@@ -18,6 +19,8 @@ import {
 } from '@/lib/orders';
 import { getTaxRateDecimal } from '@/lib/runtime-settings';
 import { normalizeCustomizationInputs, type OrderItemInput } from '@/lib/order-customization';
+import { isSettingEnabled } from '@/lib/runtime-settings';
+import { fireAndForget, sendToUser } from '@/lib/notifications';
 
 const orderItemInclude = {
     menuItem: true,
@@ -60,7 +63,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const isKitchenTransition = nextStatus === 'preparing' || nextStatus === 'ready';
     const isWaiterAction = Boolean(data.items) || data.action === 'confirm_manual_payment' || data.confirmManualPayment === true || nextStatus === 'served' || nextStatus === 'cancelled';
 
-    if (!['waiter', 'kitchen'].includes(user.role)) {
+    if (!isWaiterRole(user.role) && user.role !== 'kitchen') {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -68,7 +71,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    if (user.role === 'waiter' && !isWaiterAction) {
+    if (isWaiterRole(user.role) && !isWaiterAction) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -270,6 +273,21 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
             return updatedOrder;
         }, { timeout: 20000 });
+
+        if (order.status === 'ready' && order.userId) {
+            fireAndForget((async () => {
+                if (!(await isSettingEnabled('notifyNewOrders'))) return;
+                const tableLabel = order.tableId && order.table?.number != null
+                    ? `Table ${order.table.number}`
+                    : (order.type === 'takeout' ? 'Takeaway' : 'Order');
+                await sendToUser(order.userId, {
+                    title: `Order #${order.orderNumber} is ready`,
+                    body: `${tableLabel} • ready for pickup from the kitchen`,
+                    url: `/tables`,
+                    tag: `order-ready-${order.id}`,
+                });
+            })());
+        }
 
         return NextResponse.json(order);
     } catch (error) {

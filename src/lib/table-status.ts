@@ -14,19 +14,14 @@ export const TABLE_STATUS_COLORS = {
         tint: 'rgba(148,163,184,0.16)',
         panel: 'rgba(148,163,184,0.16)',
     },
-    cleaning: {
-        solid: '#a855f7',
-        tint: 'rgba(168,85,247,0.15)',
-        panel: 'rgba(168,85,247,0.15)',
-    },
 } as const;
 
-export type TableDisplayStatus = 'available' | 'occupied' | 'reserved' | 'cleaning';
+export type TableDisplayStatus = 'available' | 'occupied' | 'reserved';
 
 export function getTableStatusColor(status?: string) {
     if (status === 'occupied') return TABLE_STATUS_COLORS.occupied;
     if (status === 'reserved') return TABLE_STATUS_COLORS.reserved;
-    if (status === 'cleaning') return TABLE_STATUS_COLORS.cleaning;
+
     return TABLE_STATUS_COLORS.available;
 }
 
@@ -39,6 +34,5 @@ export function getTableDisplayStatus({
 }): TableDisplayStatus {
     if (activeOrderCount > 0) return 'occupied';
     if (status === 'reserved') return 'reserved';
-    if (status === 'cleaning') return 'cleaning';
     return 'available';
 }

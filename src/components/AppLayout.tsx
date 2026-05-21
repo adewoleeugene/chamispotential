@@ -2,6 +2,8 @@
 import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
+import { useSettings } from '@/contexts/SettingsContext';
+import { isWaiterRole } from '@/lib/roleRoutes';
 import Sidebar from '@/components/Sidebar';
 import { Bell, Check, Menu, ChefHat, ArrowRight } from 'lucide-react';
 
@@ -17,8 +19,11 @@ type ReadyOrder = {
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
     const { user, loading } = useAuth();
+    const { settings } = useSettings();
     const router = useRouter();
     const pathname = usePathname();
+
+    const brandName = settings.restaurantName?.trim() || 'Flavor OS';
 
     const [readyOrders, setReadyOrders] = useState<ReadyOrder[]>([]);
     const [showNotifs, setShowNotifs] = useState(false);
@@ -115,7 +120,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
     const getTitle = () => {
         const mainPath = `/${pathname.split('/')[1]}`;
-        return titleMap[mainPath] || 'Restaurant System';
+        return titleMap[mainPath] || brandName;
     };
 
     const roleLabel = user.role.charAt(0).toUpperCase() + user.role.slice(1);
@@ -150,7 +155,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                             <Menu size={18} />
                         </button>
                         <div className="header-title-group">
-                            <span className="header-kicker">Service command center</span>
                             <div className="header-title-row">
                                 <h1 className="page-title">{getTitle()}</h1>
                                 <span className="header-chip">{roleLabel}</span>
@@ -159,7 +163,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                         </div>
                     </div>
                     <div className="header-right">
-                        {user?.role === 'waiter' && (
+                        {isWaiterRole(user?.role) && (
                             <div className="header-notification-wrap">
                                 <button
                                     onClick={() => setShowNotifs(!showNotifs)}
@@ -215,7 +219,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                         </div>
                     </div>
                 </header>
-                {user?.role === 'waiter' && readyOrders.length > 0 && (
+                {isWaiterRole(user?.role) && readyOrders.length > 0 && (
                     <div className="waiter-ready-banner">
                         <div className="waiter-ready-banner-copy">
                             <div className="waiter-ready-banner-kicker">

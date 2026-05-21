@@ -4,7 +4,10 @@ import { getRequestUser, hashPassword, validatePassword } from '@/lib/auth';
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
     const user = await getRequestUser(req);
-    if (!user || user.role !== 'admin') {
+    if (!user) {
+        return NextResponse.json({ error: 'Your session has expired. Please log in again.' }, { status: 401 });
+    }
+    if (user.role !== 'admin') {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 

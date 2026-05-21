@@ -1,3 +1,56 @@
+@import "tailwindcss";
+
+/* ─── Design tokens — the only place to change per-restaurant theme ────────
+   To re-brand for a new restaurant, override these variables in
+   src/themes/<restaurant>.css and import that file after globals.css.
+   ────────────────────────────────────────────────────────────────────────── */
+
+@theme {
+  /* Tailwind reads these so utilities like bg-brand-500, text-text-primary work */
+  --color-brand-50: #fff4e8;
+  --color-brand-100: #fddfbe;
+  --color-brand-200: #f3c18b;
+  --color-brand-300: #d8a15a;
+  --color-brand-400: #c98541;
+  --color-brand-500: #b46833;
+  --color-brand-600: #95542d;
+  --color-brand-700: #6f3c1f;
+  --color-brand-900: #2b170f;
+
+  --color-background: #07090d;
+  --color-foreground: #f5efe6;
+  --color-muted: #7c7368;
+  --color-border: rgba(240, 229, 213, 0.09);
+
+  --color-success: #53d3a7;
+  --color-warning: #f5b15d;
+  --color-danger: #f06b64;
+  --color-info: #70aee7;
+
+  /* Typography scale — never use raw px in components */
+  --text-xs:   12px;
+  --text-sm:   13px;
+  --text-base: 14px;
+  --text-md:   16px;
+  --text-lg:   18px;
+  --text-xl:   24px;
+  --text-2xl:  32px;
+
+  /* Spacing — 4px grid */
+  --spacing: 4px;
+
+  /* Radii — shared with shadcn */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-full: 9999px;
+
+  /* Touch targets — for tablet use in restaurants */
+  --size-tap-min: 44px;
+  --size-tap-comfortable: 48px;
+}
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
@@ -23,7 +76,7 @@
   --text-primary: #f5efe6;
   --text-secondary: #baaf9d;
   --text-muted: #7c7368;
-  --text-accent: #efc28c;
+  --text-accent: #c98541;
 
   --border: rgba(240, 229, 213, 0.09);
   --border-strong: rgba(240, 229, 213, 0.16);
@@ -964,9 +1017,10 @@ body.menu-open {
   align-items: center;
   gap: 8px;
   justify-content: center;
-  padding: 10px 18px;
-  border-radius: 14px;
-  font-size: 13.5px;
+  min-height: var(--size-tap-min);
+  padding: 12px 20px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-base);
   font-weight: 700;
   cursor: pointer;
   border: none;
@@ -1006,8 +1060,8 @@ body.menu-open {
 }
 .btn-success:hover:not(:disabled) { background: rgba(16,185,129,0.25); }
 
-.btn-sm { padding: 6px 12px; font-size: 12px; }
-.btn-icon { padding: 8px; border-radius: var(--radius-sm); }
+.btn-sm { min-height: 36px; padding: 8px 14px; font-size: var(--text-sm); border-radius: var(--radius-sm); }
+.btn-icon { min-height: var(--size-tap-min); min-width: var(--size-tap-min); padding: 10px; border-radius: var(--radius-sm); }
 
 /* Badges / Status */
 .badge {
@@ -2102,10 +2156,15 @@ body.menu-open {
   position: fixed;
   bottom: 24px;
   right: 24px;
-  z-index: 500;
+  z-index: 9999;
   display: flex;
   flex-direction: column;
   gap: 10px;
+  pointer-events: none;
+}
+
+.toast-container > .toast {
+  pointer-events: auto;
 }
 
 .toast {
@@ -2159,6 +2218,7 @@ body.menu-open {
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes slideInRight { from { opacity: 0; transform: translateX(30px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes fadeSlideIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 

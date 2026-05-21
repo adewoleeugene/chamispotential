@@ -3,6 +3,9 @@ import { prisma } from '@/lib/prisma';
 import { getRequestUser } from '@/lib/auth';
 import { createOrderWithItems } from '@/lib/orders';
 import { normalizeCustomizationInputs } from '@/lib/order-customization';
+import { isWaiterRole } from '@/lib/roleRoutes';
+import { isSettingEnabled } from '@/lib/runtime-settings';
+import { fireAndForget, sendToRoles } from '@/lib/notifications';
 
 export async function GET(req: NextRequest) {
     const user = await getRequestUser(req);
@@ -12,7 +15,7 @@ export async function GET(req: NextRequest) {
     const statusWhere = status ? (status.includes(',') ? { status: { in: status.split(',') } } : { status }) : {};
     const where = {
         ...statusWhere,
-        ...(user.role === 'waiter' ? { userId: user.id } : {}),
+        ...(isWaiterRole(user.role) ? { userId: user.id } : {}),
     };
     const orders = await prisma.order.findMany({
         where,
@@ -36,7 +39,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
     const user = await getRequestUser(req);
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    if (user.role !== 'waiter') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    if (!isWaiterRole(user.role)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     const { tableId, items, type, notes, customerName, customerPhone, discount, paymentMethod, paymentStatus, status, deferActivation } = await req.json();
 
@@ -63,6 +66,44 @@ export async function POST(req: NextRequest) {
                 items: normalizedItems,
             });
         }, { timeout: 20000 });
+
+        if (order.status === 'pending') {
+            fireAndForget((async () => {
+                if (await isSettingEnabled('notifyNewOrders')) {
+                    const tableLabel = order.tableId && order.table?.number != null
+                        ? `Table ${order.table.number}`
+                        : (order.type || 'Order');
+                    await sendToRoles(['kitchen', 'manager', 'admin'], {
+                        title: `New order #${order.orderNumber}`,
+                        body: `${tableLabel} • ${order.items.length} item${order.items.length === 1 ? '' : 's'}`,
+                        url: '/kitchen',
+                        tag: `order-${order.id}`,
+                    });
+                }
+
+                if (await isSettingEnabled('notifyLowInventory')) {
+                    const lowItems = await prisma.inventory.findMany({
+                        where: { currentStock: { lte: prisma.inventory.fields.minStock } },
+                        select: { name: true, currentStock: true, minStock: true, unit: true },
+                        orderBy: { currentStock: 'asc' },
+                        take: 5,
+                    });
+                    if (lowItems.length > 0) {
+                        const summary = lowItems
+                            .slice(0, 3)
+                            .map((item) => `${item.name} (${item.currentStock}${item.unit})`)
+                            .join(', ');
+                        const extra = lowItems.length > 3 ? ` +${lowItems.length - 3} more` : '';
+                        await sendToRoles(['manager', 'admin'], {
+                            title: 'Low inventory',
+                            body: `${summary}${extra}`,
+                            url: '/inventory',
+                            tag: 'low-inventory',
+                        });
+                    }
+                }
+            })());
+        }
 
         return NextResponse.json(order, { status: 201 });
     } catch (error) {
