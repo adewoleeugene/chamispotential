@@ -9,7 +9,7 @@ import {
     GitMerge, UtensilsCrossed,
     CalendarDays, RefreshCw, ZoomIn, ZoomOut,
     Users, X, CheckCircle, ArrowRight, Link, Plus, Pencil, Trash2, LocateFixed, Clock3,
-    BarChart3, DollarSign, ShoppingCart
+    BarChart3, DollarSign, ShoppingCart, ChevronLeft, ChevronRight
 } from 'lucide-react';
 import { formatCurrency } from '@/lib/currency';
 import { getTableDisplayStatus, TABLE_STATUS_COLORS } from '@/lib/table-status';
@@ -419,6 +419,8 @@ export default function TablesPage() {
     const [editingTable, setEditingTable] = useState<any>(null);
     const [savingTable, setSavingTable] = useState(false);
     const [tableForm, setTableForm] = useState({ number: '', section: '', capacity: '4', status: 'available', shape: 'rect' });
+
+    const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
     // ── Merge state ────────────────────────────────────────────────────────
     type MergeStep = 'idle' | 'selectSource' | 'selectTarget' | 'confirm';
@@ -1058,7 +1060,37 @@ export default function TablesPage() {
                 </div>
 
                 {/* ── Right Sidebar ─────────────────────────────────────────── */}
-                <div className="floor-sidebar" style={{ width: 232, display: 'flex', flexDirection: 'column', gap: 12, flexShrink: 0 }}>
+                <div className="floor-sidebar" style={{ width: sidebarCollapsed ? 36 : 232, display: 'flex', flexDirection: 'column', gap: 12, flexShrink: 0, transition: 'width 0.2s ease', overflow: 'hidden', position: 'relative' }}>
+
+                    {/* Collapse toggle */}
+                    <button
+                        onClick={() => setSidebarCollapsed(c => !c)}
+                        title={sidebarCollapsed ? 'Expand panel' : 'Collapse panel'}
+                        style={{
+                            position: 'absolute',
+                            top: 0,
+                            left: sidebarCollapsed ? '50%' : 0,
+                            transform: sidebarCollapsed ? 'translateX(-50%)' : 'none',
+                            zIndex: 10,
+                            background: 'rgba(15,23,42,0.9)',
+                            border: '1px solid rgba(148,163,184,0.2)',
+                            borderRadius: 8,
+                            width: 28,
+                            height: 28,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            cursor: 'pointer',
+                            color: '#94a3b8',
+                            flexShrink: 0,
+                            transition: 'left 0.2s ease',
+                        }}
+                    >
+                        {sidebarCollapsed ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
+                    </button>
+
+                    {/* Sidebar content — hidden when collapsed */}
+                    <div style={{ display: sidebarCollapsed ? 'none' : 'flex', flexDirection: 'column', gap: 12, paddingTop: 36 }}>
 
                     {user?.role === 'manager' ? (
                         <>
@@ -1206,6 +1238,7 @@ export default function TablesPage() {
                         </>
                     )}
 
+                    </div>{/* end sidebar content wrapper */}
                 </div>
             </div>
 
