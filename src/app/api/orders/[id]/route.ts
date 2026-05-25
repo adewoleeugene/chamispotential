@@ -62,16 +62,17 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const nextStatus = typeof data.status === 'string' ? data.status : null;
     const isKitchenTransition = nextStatus === 'preparing' || nextStatus === 'ready';
     const isWaiterAction = Boolean(data.items) || data.action === 'confirm_manual_payment' || data.confirmManualPayment === true || nextStatus === 'served' || nextStatus === 'cancelled';
+    const isAdminRole = user.role === 'admin' || user.role === 'manager';
 
-    if (!isWaiterRole(user.role) && user.role !== 'kitchen') {
+    if (!isAdminRole && !isWaiterRole(user.role) && user.role !== 'kitchen') {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    if (user.role === 'kitchen' && !isKitchenTransition) {
+    if (!isAdminRole && user.role === 'kitchen' && !isKitchenTransition) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    if (isWaiterRole(user.role) && !isWaiterAction) {
+    if (!isAdminRole && isWaiterRole(user.role) && !isWaiterAction) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
