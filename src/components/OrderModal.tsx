@@ -291,7 +291,7 @@ export default function OrderModal({ table, onClose, onRefresh }: { table: any, 
             body: JSON.stringify(payload)
         });
         const data = await res.json().catch(() => null);
-        if (!res.ok || !data?.redirectUrl) throw new Error(data?.error || 'Failed to start Monime checkout');
+        if (!res.ok || !data?.redirectUrl) throw new Error(data?.details || data?.error || 'Failed to start Monime checkout');
         toast('info', 'Redirecting to Monime checkout...');
         window.location.href = data.redirectUrl;
     };
